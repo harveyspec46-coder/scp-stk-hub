@@ -1117,19 +1117,35 @@ function AuthScreen({ onAuth, lang, setLang }) {
 
   const handleLogin = async () => {
     setLErr(""); setLLoad(true);
-    await new Promise(r => setTimeout(r, 750));
     if (!lEmail || !lPass) { setLErr("Please enter your email and password."); setLLoad(false); return; }
-    const name = lEmail.split("@")[0].split(".").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-    // Placeholder until Supabase auth is wired (see backend README): role is
-    // simulated from the email domain only. Once connected, the real role,
-    // office, and display_id come back from `users` via the admin_allowlist
-    // + handle_new_user() trigger — admins on that allowlist are recognized
-    // automatically the moment they sign up, no hardcoding needed here.
-    if (isSCP(lEmail)) {
-      onAuth({ name, email: lEmail, role:"manager", uid:"", office:"north" });
-    } else {
-      onAuth({ name, email: lEmail, role:"staff", uid:"", office:"south" });
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: lEmail,
+      password: lPass,
+    });
+
+    if (error) { setLErr(error.message); setLLoad(false); return; }
+
+    const { data: profile, error: profileErr } = await supabase
+      .from("users")
+      .select("full_name, role, office, display_id")
+      .eq("id", data.user.id)
+      .single();
+
+    if (profileErr) {
+      setLErr("Logged in, but couldn't load your profile. Try again shortly.");
+      setLLoad(false);
+      return;
     }
+
+    onAuth({
+      id: data.user.id,
+      name: profile.full_name,
+      email: data.user.email,
+      role: profile.role,
+      office: profile.office,
+      uid: profile.display_id || "",
+    });
     setLLoad(false);
   };
 
@@ -1159,8 +1175,17 @@ function AuthScreen({ onAuth, lang, setLang }) {
     if (sRole === "staff" && scpEmail)  { setSErr("SCP email accounts must be Admin or Manager. Use a personal email for Staff."); return; }
     if (sPass.length < 8)      { setSErr("Password must be at least 8 characters."); return; }
     if (sPass !== sPass2)      { setSErr("Passwords do not match."); return; }
+
     setSLoad(true);
-    await new Promise(r => setTimeout(r, 900));
+
+    const { data, error } = await supabase.auth.signUp({
+      email: sEmail,
+      password: sPass,
+      options: { data: { full_name: sName } },
+    });
+
+    if (error) { setSErr(error.message); setSLoad(false); return; }
+
     setSLoad(false);
     setSOk(true);
   };
@@ -4370,7 +4395,31 @@ export default function App() {
   }, []);
 
   const handleAuth = (userData) => setUser(userData);
-  const handleLogout = () => setUser(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!data.session) return;
+      const { data: profile } = await supabase
+        .from("users")
+        .select("full_name, role, office, display_id")
+        .eq("id", data.session.user.id)
+        .single();
+      if (profile) {
+        setUser({
+          id: data.session.user.id,
+          name: profile.full_name,
+          email: data.session.user.email,
+          role: profile.role,
+          office: profile.office,
+          uid: profile.display_id || "",
+        });
+      }
+    });
+  }, []);
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+  };
 
   if (!user) return (
     <>
