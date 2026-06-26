@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-
+import { supabase } from "./supabaseClient";
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const SCP_DOMAIN = "scproject17.onmicrosoft.com";
 const T = {
