@@ -4985,14 +4985,69 @@ function Notifications({ toast }) {
 
 // ── Users & IDs (Admin only) ──────────────────────────────────────────────────
 function UsersAndIDs({ toast, user }) {
-  const [users, setUsers] = useState(MOCK_PENDING_USERS);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
   const isSuperAdmin = user?.superAdmin === true;
-  const upd = (id, val) =>
-    setUsers((p) => p.map((u) => (u.id === id ? { ...u, uid: val } : u)));
 
-  const grantSuperAdmin = (userId) => {
-    setUsers((p) => p.map((u) => u.id === userId ? { ...u, superAdmin: true, role: "admin" } : u));
-    toast("Super admin access granted ✓", "success");
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        const res = await fetch(
+          `${import.meta.env.VITE_API_URL}/api/admin/users`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const json = await res.json();
+        if (json.data) setUsers(json.data);
+      } catch (e) {
+        toast("Failed to load users", "error");
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
+
+  const upd = (id, val) =>
+    setUsers((p) => p.map((u) => (u.id === id ? { ...u, display_id: val } : u)));
+
+  const saveDisplayID = async (u) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/admin/users/${u.id}/display-id`,
+        {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ display_id: u.display_id }),
+        }
+      );
+      if (!res.ok) throw new Error();
+      toast("ID " + u.display_id + " assigned to " + u.full_name + " ✓", "success");
+    } catch {
+      toast("Failed to save ID", "error");
+    }
+  };
+
+  const grantSuperAdmin = async (userId) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+      await fetch(
+        `${import.meta.env.VITE_API_URL}/api/admin/users/${userId}/display-id`,
+        {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ role: "admin" }),
+        }
+      );
+      setUsers((p) => p.map((u) => u.id === userId ? { ...u, role: "admin" } : u));
+      toast("Super admin access granted ✓", "success");
+    } catch {
+      toast("Failed to grant super admin", "error");
+    }
   };
 
   return (
