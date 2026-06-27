@@ -1417,7 +1417,7 @@ function BoardShell({ user, onLogout, toast }) {
               </div>
             </div>
           </div>
-          <IdBadge uid={user.uid} />
+          <IdBadge uid={user.displayId || user.uid} />
         </div>
         <CollapsibleNav
           nav={BOARD_NAV}
@@ -5362,7 +5362,7 @@ function StaffShell({ user, onLogout, toast }) {
               <div className="sb-urole">Workforce Staff</div>
             </div>
           </div>
-          <IdBadge uid={user.uid} />
+          <IdBadge uid={user.displayId || user.uid} />
         </div>
         <div className="sb-nav">
           {sections.map((sec) => (
