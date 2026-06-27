@@ -626,12 +626,12 @@ function OfficePill({ o }) {
 }
 
 function IdBadge({ uid }) {
-  if (!uid) return <span className="id-badge id-none">⏳ ID pending</span>;
-  const cls = uid.startsWith("ADM")
+  if (!uid || uid === "") return <span className="id-badge id-none">⏳ ID pending</span>;
+  const cls = (uid || "").startsWith("ADM")
     ? "id-adm"
-    : uid.startsWith("MGR")
+    : (uid || "").startsWith("MGR")
     ? "id-mgr"
-    : uid.startsWith("STF")
+    : (uid || "").startsWith("STF")
     ? "id-stf"
     : "id-par";
   return <span className={`id-badge ${cls}`}>{uid}</span>;
@@ -644,7 +644,7 @@ const stageLabelEN = {
   completed: "Completed",
   invoiced: "Invoiced",
 };
-const stageLabel = (s) => stageLabelEN[s] || s;
+const stageLabel = (s) => s ? (stageLabelEN[s] || s) : "";
 const stageColor = (s) =>
   ({
     job_scheduled: "b-gr",
@@ -1281,7 +1281,6 @@ const BOARD_NAV = [
     label: "Voting",
     icon: "🗳️",
     section: "Governance",
-    badge: 2,
   },
   {
     key: "esignatures",
@@ -1294,7 +1293,6 @@ const BOARD_NAV = [
     label: "Notifications",
     icon: "🔔",
     section: "Governance",
-    badge: 3,
   },
   // Admin
   { key: "users", label: "Users & IDs", icon: "🪪", section: "Admin" },
@@ -2897,7 +2895,7 @@ function CRMBoard({ toast }) {
                   }}
                 >
                   Advance →{" "}
-                  {stageLabel(STAGES[STAGES.indexOf(selJob.stage) + 1])}
+                  {stageLabel(STAGES[STAGES.indexOf(selJob?.stage) + 1] || "")}
                 </button>
               )}
             </>
@@ -2915,7 +2913,7 @@ function CRMBoard({ toast }) {
               [
                 "Stage",
                 <span className={`badge ${stageColor(selJob.stage)}`}>
-                  {stageLabel(selJob.stage)}
+                  {stageLabel(selJob.stage || "")}
                 </span>,
               ],
               ["Price", "$" + (selJob.price?.toFixed(2) || "0.00")],
@@ -3314,8 +3312,7 @@ function CRMBoard({ toast }) {
                         advance(dragItem.job.id, stage);
                         toast(
                           `${dragItem.job.service} → ${stageLabel(
-                            stage,
-                            lang
+                            stage
                           )} ✓`,
                           "success"
                         );
@@ -3325,7 +3322,7 @@ function CRMBoard({ toast }) {
                   >
                     <div className="kb-hdr">
                       <span className="kb-ht" style={{ color: SCOLORS[stage] }}>
-                        {SICONS[stage]} {stageLabel(stage, lang)}
+                        {SICONS[stage]} {stageLabel(stage)}
                       </span>
                       <span className="kb-n">{list.length}</span>
                     </div>
@@ -4036,7 +4033,7 @@ function Finance({ toast }) {
                     </td>
                     <td>
                       <span className={`badge ${stageColor(j.stage)}`}>
-                        {stageLabel(j.stage, lang)}
+                        {stageLabel(j.stage)}
                       </span>
                     </td>
                     <td>
@@ -5139,7 +5136,7 @@ function UsersAndIDs({ toast, user }) {
                 className="av"
                 style={{ width: 32, height: 32, borderRadius: 8, fontSize: 11 }}
               >
-                {u.name
+                {(u.full_name || u.name || "?")
                   .split(" ")
                   .map((n) => n[0])
                   .join("")
@@ -5147,7 +5144,7 @@ function UsersAndIDs({ toast, user }) {
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>
-                  {u.name}
+                  {u.full_name || u.name}
                 </div>
                 <div style={{ fontSize: 11, color: T.muted }}>{u.email}</div>
               </div>
@@ -5292,7 +5289,6 @@ const STAFF_NAV = [
     label: "Notifications",
     icon: "🔔",
     section: "Account",
-    badge: 2,
   },
 ];
 
@@ -5645,7 +5641,7 @@ function StaffMyJobs({ toast, user }) {
               </div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 <span className={`badge ${stageColor(job.stage)}`}>
-                  {stageLabel(job.stage, lang)}
+                  {stageLabel(job.stage)}
                 </span>
                 <span className="badge b-gr">${job.price}</span>
                 <span className="badge b-a">⏱ {job.estHours}h est.</span>
