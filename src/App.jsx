@@ -1499,8 +1499,37 @@ function BoardShell({ user, onLogout, toast }) {
 }
 
 // ── Board Dashboard ──────────────────────────────────────────────────────────
-function BoardDashboard({ onNav, toast }) {
+function BoardDashboard({ onNav, toast, user }) {
+  const [stats, setStats] = React.useState({ jobs: 0, participants: 0, grants: 0, votes: 0, boardMembers: 0, staff: 0, idPending: 0 });
   const activity = [];
+
+  React.useEffect(() => {
+    const load = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token;
+        const h = { Authorization: `Bearer ${token}` };
+        const base = import.meta.env.VITE_API_URL;
+        const [usersRes, grantsRes, votesRes, partsRes] = await Promise.all([
+          fetch(`${base}/api/admin/users`, { headers: h }).then(r => r.json()),
+          fetch(`${base}/api/grants`, { headers: h }).then(r => r.json()),
+          fetch(`${base}/api/resolutions`, { headers: h }).then(r => r.json()),
+          fetch(`${base}/api/participants`, { headers: h }).then(r => r.json()),
+        ]);
+        const users = usersRes.data || [];
+        setStats({
+          jobs: 0,
+          participants: (partsRes.data || []).length,
+          grants: (grantsRes.data || []).filter(g => g.stage !== "awarded").length,
+          votes: (votesRes.data || []).filter(v => v.status === "open").length,
+          boardMembers: users.filter(u => u.role === "admin" || u.role === "manager").length,
+          staff: users.filter(u => u.role === "staff").length,
+          idPending: users.filter(u => !u.display_id).length,
+        });
+      } catch(e) { console.error(e); }
+    };
+    load();
+  }, []);
   return (
     <div>
       <div style={{ marginBottom: 18 }}>
@@ -1520,10 +1549,10 @@ function BoardDashboard({ onNav, toast }) {
       </div>
       <div className="stats-grid">
         {[
-          { l: "Active jobs", v: 18, d: "+4 this week", up: true },
-          { l: "Participants", v: 163, d: "8 active programs" },
-          { l: "Open grants", v: 6, d: "2 due soon" },
-          { l: "Pending votes", v: 2, d: "closes Nov 15" },
+          { l: "Active jobs", v: stats.jobs, d: "", up: true },
+          { l: "Participants", v: stats.participants, d: "" },
+          { l: "Open grants", v: stats.grants, d: "" },
+          { l: "Pending votes", v: stats.votes, d: "" },
         ].map((s, i) => (
           <div key={i} className="sc">
             <div className="sc-lbl">{s.l}</div>
@@ -1568,7 +1597,7 @@ function BoardDashboard({ onNav, toast }) {
             {
               icon: "🏛️",
               l: "Board members",
-              v: "11",
+              v: stats.boardMembers,
               sub: "Admin & Manager",
               color: T.pink,
               page: "users",
@@ -1576,16 +1605,16 @@ function BoardDashboard({ onNav, toast }) {
             {
               icon: "🔧",
               l: "Workforce staff",
-              v: "4",
-              sub: "18 active jobs",
+              v: stats.staff,
+              sub: "Active jobs",
               color: T.green,
               page: "crm",
             },
             {
               icon: "🎓",
               l: "Program participants",
-              v: "163",
-              sub: "Across 8 programs",
+              v: stats.participants,
+              sub: "Across programs",
               color: T.blue,
               page: "participants",
             },
