@@ -12,7 +12,7 @@ async function fetchUserProfile(authUser, accessToken) {
     "Content-Type": "application/json",
   };
   const res = await fetch(
-    `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/users?select=id,full_name,role,office,active&id=eq.${authUser.id}&limit=1`,
+    `${import.meta.env.VITE_SUPABASE_URL}/rest/v1/users?select=id,full_name,role,office,active,display_id&id=eq.${authUser.id}&limit=1`,
     { headers }
   );
   console.log("Profile fetch status:", res.status);
@@ -31,6 +31,7 @@ async function fetchUserProfile(authUser, accessToken) {
     superAdmin: isSuperAdmin,
     office: data.office,
     active: data.active,
+    displayId: data.display_id || "",
   };
 }
 
