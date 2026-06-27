@@ -2231,6 +2231,18 @@ function Participants({ toast }) {
           </div>
         </>
       )}
+      {tab === "forms" && (
+        <div style={{ color: T.muted, fontSize: 12, padding: "20px 0" }}>No form templates yet.</div>
+      )}
+      {tab === "uploads" && (
+        <div>
+          <div className="upload-zone" onClick={() => toast("Upload — Supabase Storage")}>
+            <div style={{ fontSize: 28, marginBottom: 7 }}>📎</div>
+            <div style={{ fontSize: 13, color: T.text }}>Upload completed physical form</div>
+          </div>
+          <div style={{ color: T.muted, fontSize: 12 }}>No uploaded files yet.</div>
+        </div>
+      )}
 
       {tab === "add" && (
         <div className="card">
@@ -2728,6 +2740,18 @@ function Participants({ toast }) {
             </div>
           </div>
         </>
+      )}
+      {tab === "forms" && (
+        <div style={{ color: T.muted, fontSize: 12, padding: "20px 0" }}>No form templates yet.</div>
+      )}
+      {tab === "uploads" && (
+        <div>
+          <div className="upload-zone" onClick={() => toast("Upload — Supabase Storage")}>
+            <div style={{ fontSize: 28, marginBottom: 7 }}>📎</div>
+            <div style={{ fontSize: 13, color: T.text }}>Upload completed physical form</div>
+          </div>
+          <div style={{ color: T.muted, fontSize: 12 }}>No uploaded files yet.</div>
+        </div>
       )}
 
       {tab === "add" && (
