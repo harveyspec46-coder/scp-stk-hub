@@ -514,8 +514,6 @@ const MOCK_PROGRAMS = [
     id: 1,
     name: "I Am 1 / Me2",
     sub: "Street Outreach",
-    p: 34,
-    d: 8,
     off: "both",
     icon: "🌍",
   },
@@ -523,17 +521,13 @@ const MOCK_PROGRAMS = [
     id: 2,
     name: "LELN",
     sub: "Legal Navigation",
-    p: 21,
-    d: 12,
-    off: "north",
+    off: "both",
     icon: "⚖️",
   },
   {
     id: 3,
     name: "FSURP + Stabilize 72",
     sub: "Relational Infrastructure",
-    p: 28,
-    d: 6,
     off: "both",
     icon: "🌱",
   },
@@ -541,17 +535,13 @@ const MOCK_PROGRAMS = [
     id: 4,
     name: "AVP + Trauma Healing",
     sub: "Healing & Safety",
-    p: 19,
-    d: 9,
-    off: "south",
+    off: "both",
     icon: "💙",
   },
   {
     id: 5,
     name: "Pay It Forward",
     sub: "Vocational Pathway (6–12mo)",
-    p: 23,
-    d: 15,
     off: "both",
     icon: "💼",
   },
@@ -559,17 +549,13 @@ const MOCK_PROGRAMS = [
     id: 6,
     name: "Discovery Bay",
     sub: "Ecofarm Respite",
-    p: 11,
-    d: 5,
-    off: "north",
+    off: "both",
     icon: "🌾",
   },
   {
     id: 7,
     name: "Lynn Dancer Squad",
     sub: "Personal Assistant Program",
-    p: 9,
-    d: 4,
     off: "both",
     icon: "🤝",
   },
@@ -577,9 +563,7 @@ const MOCK_PROGRAMS = [
     id: 8,
     name: "Family Pathways",
     sub: "WYFF-Aligned",
-    p: 18,
-    d: 11,
-    off: "south",
+    off: "both",
     icon: "🏠",
   },
 ];
@@ -1774,10 +1758,10 @@ function Programs({ toast }) {
             </div>
             <div style={{ display: "flex", gap: 18 }}>
               <span style={{ fontSize: 12, color: T.sub }}>
-                <b style={{ color: T.white }}>{p.p}</b> participants
+                <b style={{ color: T.white }}>0</b> participants
               </span>
               <span style={{ fontSize: 12, color: T.sub }}>
-                <b style={{ color: T.white }}>{p.d}</b> documents
+                <b style={{ color: T.white }}>0</b> documents
               </span>
               <OfficePill o={p.off} />
             </div>
@@ -1794,7 +1778,7 @@ function Programs({ toast }) {
                 "+ Upload"
               </button>
             </div>
-            {docs.slice(0, Math.min(p.d, 5)).map((d, i) => (
+            {docs.slice(0, 5).map((d, i) => (
               <div
                 key={i}
                 style={{
@@ -1920,9 +1904,7 @@ function Programs({ toast }) {
                       sub: progForm.sub || "New program",
                       off: progForm.off,
                       icon: progForm.icon,
-                      p: 0,
-                      d: 0,
-                    },
+                                                        },
                   ]);
                   setShowAddProg(false);
                   setProgForm({ name: "", sub: "", off: "both", icon: "🌟" });
@@ -2051,8 +2033,8 @@ function Programs({ toast }) {
             <div className="prog-name">{p.name}</div>
             <div className="prog-sub">{p.sub}</div>
             <div className="prog-meta">
-              <span className="prog-tag">{p.p} participants</span>
-              <span className="prog-tag">{p.d} docs</span>
+              <span className="prog-tag">0 participants</span>
+              <span className="prog-tag">0 docs</span>
               <OfficePill o={p.off} />
             </div>
           </div>
