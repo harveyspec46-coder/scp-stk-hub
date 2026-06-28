@@ -2050,6 +2050,39 @@ function Participants({ toast }) {
   const [mode, setMode] = useState("digital");
   const [search, setSearch] = useState("");
   const [progF, setProgF] = useState("all");
+  const [loading, setLoading] = useState(true);
+
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token;
+  };
+
+  const loadParticipants = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/participants`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const json = await res.json();
+      if (json.data) setParts(json.data.map(p => ({
+        id: p.id,
+        pid: p.display_id || "",
+        type: p.type || "participant",
+        name: p.full_name,
+        program: p.program || "",
+        stage: p.stage || "Intake",
+        staff: p.assigned_staff || "—",
+        housing: p.housing_status || "Unstable",
+        mode: p.intake_mode || "digital",
+        submitted: new Date(p.created_at).toLocaleDateString(),
+        phone: p.phone || "",
+        notes: p.notes || "",
+      })));
+    } catch(e) { toast("Failed to load participants", "error"); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { loadParticipants(); }, []);
   const [pForm, setPForm] = useState({
     name: "",
     phone: "",
@@ -2529,35 +2562,33 @@ function Participants({ toast }) {
               </div>
               <button
                 className="btn btn-p"
-                onClick={() => {
+                onClick={async () => {
                   if (!pForm.name || !pForm.phone) {
                     toast("Name and phone required", "warn");
                     return;
                   }
-                  const isVol = pForm.type === "volunteer";
-                  const idPrefix = isVol ? "VOL" : "PAR";
-                  const nextNum = (
-                    parts.filter((p) => p.type === pForm.type).length + 1
-                  )
-                    .toString()
-                    .padStart(3, "0");
-                  setParts((p) => [
-                    ...p,
-                    {
-                      id: "par" + Date.now(),
-                      pid: `${idPrefix}-${nextNum}`,
-                      type: pForm.type,
-                      name: pForm.name,
-                      program: pForm.program,
-                      stage: "Intake",
-                      staff: pForm.staff || "—",
-                      housing: pForm.housing,
-                      mode: "digital",
-                      submitted: "Today",
-                    },
-                  ]);
-                  toast("Participant added ✓", "success");
-                  setTab("list");
+                  try {
+                    const token = await getToken();
+                    const res = await fetch(`${import.meta.env.VITE_API_URL}/api/participants`, {
+                      method: "POST",
+                      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        full_name: pForm.name,
+                        phone: pForm.phone,
+                        type: pForm.type,
+                        housing_status: pForm.housing,
+                        notes: pForm.notes,
+                        intake_mode: "digital",
+                        language: pForm.language || "English",
+                      })
+                    });
+                    if (!res.ok) throw new Error();
+                    toast("Participant added ✓", "success");
+                    setTab("list");
+                    loadParticipants();
+                  } catch {
+                    toast("Failed to save participant", "error");
+                  }
                 }}
               >
                 Save participant
