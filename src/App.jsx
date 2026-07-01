@@ -4573,11 +4573,124 @@ function Grants({ toast }) {
 }
 
 // ── Voting ────────────────────────────────────────────────────────────────────
-function Voting({ toast }) {
+function Voting({ toast, user }) {
   const [resolutions, setResolutions] = useState([]);
-  const [myVotes, setMyVotes] = useState({});
+  const [voters, setVoters] = useState({}); // { resolutionId: [voterStatus...] }
   const [showAdd, setShowAdd] = useState(false);
-  const [rf, setRF] = useState({ title: "", body: "", closes: "" });
+  const [uploading, setUploading] = useState(false);
+  const [rf, setRF] = useState({ title: "", body: "", duration: "24", file: null });
+
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token;
+  };
+
+  const loadResolutions = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/resolutions`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const json = await res.json();
+      setResolutions(json.data || []);
+    } catch (e) { toast("Failed to load resolutions", "error"); }
+  };
+
+  const loadVoters = async (resId) => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/resolutions/${resId}/voters`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const json = await res.json();
+      setVoters((p) => ({ ...p, [resId]: json.data || [] }));
+    } catch (e) { /* silent */ }
+  };
+
+  useEffect(() => {
+    loadResolutions();
+  }, []);
+
+  useEffect(() => {
+    resolutions.forEach((r) => loadVoters(r.id));
+  }, [resolutions.length]);
+
+  const uploadDocument = async (file) => {
+    const token = await getToken();
+    const { data: { session } } = await supabase.auth.getSession();
+    const path = `${session.user.id}/${Date.now()}_${file.name}`;
+    const { error } = await supabase.storage
+      .from("Organization Document")
+      .upload(path, file);
+    if (error) throw error;
+    const { data: urlData } = supabase.storage
+      .from("Organization Document")
+      .getPublicUrl(path);
+    return urlData.publicUrl;
+  };
+
+  const submitResolution = async () => {
+    if (!rf.title.trim()) {
+      toast("Title required", "warn");
+      return;
+    }
+    setUploading(true);
+    try {
+      let documentUrl = "";
+      if (rf.file) {
+        documentUrl = await uploadDocument(rf.file);
+      }
+      const token = await getToken();
+      const now = new Date();
+      const closesAt = new Date(now.getTime() + parseInt(rf.duration) * 60 * 60 * 1000);
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/resolutions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: rf.title,
+          body: rf.body,
+          opens_at: now.toISOString(),
+          closes_at: closesAt.toISOString(),
+          document_url: documentUrl,
+        })
+      });
+      if (!res.ok) throw new Error();
+      toast(`Resolution proposed — voting open for ${rf.duration}h ✓`, "success");
+      setShowAdd(false);
+      setRF({ title: "", body: "", duration: "24", file: null });
+      loadResolutions();
+    } catch (e) {
+      toast("Failed to propose resolution", "error");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const castVote = async (resId, choice) => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/resolutions/${resId}/vote`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ choice })
+      });
+      if (!res.ok) throw new Error();
+      toast("Vote cast: " + choice + " ✓", "success");
+      loadResolutions();
+      loadVoters(resId);
+    } catch (e) {
+      toast("Failed to cast vote", "error");
+    }
+  };
+
+  const timeLeft = (closesAt) => {
+    const diff = new Date(closesAt) - new Date();
+    if (diff <= 0) return "Closed";
+    const hrs = Math.floor(diff / (1000 * 60 * 60));
+    const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    return `${hrs}h ${mins}m left`;
+  };
+
   return (
     <div>
       {showAdd && (
@@ -4589,31 +4702,8 @@ function Voting({ toast }) {
               <button className="btn" onClick={() => setShowAdd(false)}>
                 Cancel
               </button>
-              <button
-                className="btn btn-p"
-                onClick={() => {
-                  if (!rf.title) {
-                    toast("Title required", "warn");
-                    return;
-                  }
-                  setResolutions((p) => [
-                    ...p,
-                    {
-                      id: "r" + Date.now(),
-                      title: rf.title,
-                      by: "ADM-001 · Jamie R.",
-                      closes: rf.closes || "TBD",
-                      status: "open",
-                      yes: 0,
-                      no: 0,
-                      abstain: 0,
-                    },
-                  ]);
-                  setShowAdd(false);
-                  toast("Resolution proposed — board notified ✓", "success");
-                }}
-              >
-                Propose
+              <button className="btn btn-p" onClick={submitResolution} disabled={uploading}>
+                {uploading ? "Submitting…" : "Propose"}
               </button>
             </>
           }
@@ -4637,12 +4727,40 @@ function Voting({ toast }) {
             />
           </div>
           <div className="ff">
-            <label className="fl">Voting closes</label>
+            <label className="fl">Voting duration</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                className={`btn${rf.duration === "24" ? " btn-p" : ""}`}
+                onClick={() => setRF((f) => ({ ...f, duration: "24" }))}
+              >
+                24 hours
+              </button>
+              <button
+                className={`btn${rf.duration === "72" ? " btn-p" : ""}`}
+                onClick={() => setRF((f) => ({ ...f, duration: "72" }))}
+              >
+                72 hours
+              </button>
+            </div>
+          </div>
+          <div className="ff">
+            <label className="fl">Attach document (optional)</label>
+            <div
+              className="upload-zone"
+              onClick={() => document.getElementById("res-doc-input").click()}
+            >
+              <div style={{ fontSize: 28, marginBottom: 7 }}>📎</div>
+              <div style={{ fontSize: 13, color: T.text, marginBottom: 3 }}>
+                {rf.file ? rf.file.name : "Click to attach PDF"}
+              </div>
+              <div style={{ fontSize: 11, color: T.muted }}>PDF · Max 10MB</div>
+            </div>
             <input
-              className="fi2"
-              type="date"
-              value={rf.closes}
-              onChange={(e) => setRF((f) => ({ ...f, closes: e.target.value }))}
+              id="res-doc-input"
+              type="file"
+              accept=".pdf"
+              style={{ display: "none" }}
+              onChange={(e) => setRF((f) => ({ ...f, file: e.target.files[0] }))}
             />
           </div>
         </Modal>
@@ -4665,10 +4783,17 @@ function Voting({ toast }) {
           + Propose
         </button>
       </div>
+      {resolutions.length === 0 && (
+        <div style={{ color: T.muted, fontSize: 12, padding: "20px 0" }}>
+          No resolutions yet.
+        </div>
+      )}
       {resolutions.map((r) => {
-        const total = r.yes + r.no + r.abstain || 1;
-        const mv = myVotes[r.id];
-        const closed = r.status !== "open";
+        const total = r.yes_count + r.no_count + r.abstain_count || 1;
+        const closed = r.status !== "open" || new Date(r.closes_at) < new Date();
+        const resVoters = voters[r.id] || [];
+        const votedCount = resVoters.filter((v) => v.voted).length;
+
         return (
           <div
             key={r.id}
@@ -4685,32 +4810,27 @@ function Voting({ toast }) {
               }}
             >
               <div>
-                <div
-                  style={{
-                    fontSize: 14,
-                    fontWeight: 700,
-                    color: T.white,
-                    marginBottom: 3,
-                  }}
-                >
+                <div style={{ fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 3 }}>
                   {r.title}
                 </div>
-                <div
-                  style={{
-                    fontSize: 11,
-                    color: T.muted,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 7,
-                  }}
-                >
-                  Proposed by <IdBadge uid={r.by.split(" · ")[0]} /> · Closes{" "}
-                  {r.closes}
+                <div style={{ fontSize: 11, color: T.muted, marginBottom: 4 }}>
+                  Proposed by {r.proposer?.full_name || "—"} ·{" "}
+                  {closed ? "Closed" : timeLeft(r.closes_at)}
                 </div>
+                {r.document_url && (
+                  <a
+                    href={r.document_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: 11, color: T.pink, textDecoration: "underline" }}
+                  >
+                    📄 View attached document
+                  </a>
+                )}
               </div>
               <span
                 className={`badge${
-                  r.status === "open"
+                  r.status === "open" && !closed
                     ? " b-a"
                     : r.status === "passed"
                     ? " b-g"
@@ -4718,59 +4838,70 @@ function Voting({ toast }) {
                 }`}
                 style={{ flexShrink: 0 }}
               >
-                {r.status[0].toUpperCase() + r.status.slice(1)}
+                {closed && r.status === "open" ? "Closed" : r.status[0].toUpperCase() + r.status.slice(1)}
               </span>
             </div>
+
+            {r.body && (
+              <div style={{ fontSize: 12, color: T.sub, marginBottom: 11, lineHeight: 1.6 }}>
+                {r.body}
+              </div>
+            )}
+
             {[
-              ["Yes", r.yes, T.green],
-              ["No", r.no, T.red],
-              ["Abstain", r.abstain, T.muted],
+              ["Yes", r.yes_count, T.green],
+              ["No", r.no_count, T.red],
+              ["Abstain", r.abstain_count, T.muted],
             ].map(([l, n, c]) => (
               <div key={l} className="vbw">
                 <span className="vbl">{l}</span>
                 <div className="vbb">
-                  <div
-                    className="vbf"
-                    style={{ width: (n / total) * 100 + "%", background: c }}
-                  />
+                  <div className="vbf" style={{ width: (n / total) * 100 + "%", background: c }} />
                 </div>
                 <span className="vbc">{n}</span>
               </div>
             ))}
+
+            {resVoters.length > 0 && (
+              <div style={{ marginTop: 10, fontSize: 11, color: T.muted }}>
+                {votedCount} of {resVoters.length} board members voted
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 }}>
+                  {resVoters.map((v) => (
+                    <span
+                      key={v.user_id}
+                      className="badge"
+                      style={{
+                        background: v.voted ? "rgba(34,211,160,.12)" : "rgba(255,255,255,.06)",
+                        color: v.voted ? T.green : T.muted,
+                      }}
+                      title={v.full_name}
+                    >
+                      {v.display_id || v.full_name.split(" ")[0]} {v.voted ? "✓" : "—"}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {!closed && (
               <div style={{ display: "flex", gap: 7, marginTop: 11 }}>
                 {["yes", "no", "abstain"].map((c) => (
                   <button
                     key={c}
-                    className={`btn btn-sm${mv === c ? " btn-p" : ""}`}
-                    disabled={!!mv}
+                    className={`btn btn-sm${r.my_vote === c ? " btn-p" : ""}`}
+                    disabled={!!r.my_vote}
                     style={{
                       textTransform: "capitalize",
-                      opacity: mv && mv !== c ? 0.4 : 1,
+                      opacity: r.my_vote && r.my_vote !== c ? 0.4 : 1,
                     }}
-                    onClick={() => {
-                      if (mv) return;
-                      setMyVotes((p) => ({ ...p, [r.id]: c }));
-                      setResolutions((p) =>
-                        p.map((x) =>
-                          x.id === r.id ? { ...x, [c]: x[c] + 1 } : x
-                        )
-                      );
-                      toast("Vote cast: " + c + " ✓", "success");
-                    }}
+                    onClick={() => castVote(r.id, c)}
                   >
                     {c === "yes" ? "✓ Yes" : c === "no" ? "✗ No" : "— Abstain"}
                   </button>
                 ))}
-                {mv && (
-                  <span
-                    style={{
-                      fontSize: 11,
-                      color: T.green,
-                      alignSelf: "center",
-                    }}
-                  >
-                    Your vote: {mv}
+                {r.my_vote && (
+                  <span style={{ fontSize: 11, color: T.green, alignSelf: "center" }}>
+                    Your vote: {r.my_vote}
                   </span>
                 )}
               </div>
@@ -4893,6 +5024,13 @@ function UsersAndIDs({ toast, user }) {
       );
       if (!res.ok) throw new Error();
       toast("ID " + u.display_id + " assigned to " + u.full_name + " ✓", "success");
+      // Reload to reflect persisted state
+      const { data: { session: s2 } } = await supabase.auth.getSession();
+      const res2 = await fetch(`${import.meta.env.VITE_API_URL}/api/admin/users`, {
+        headers: { Authorization: `Bearer ${s2?.access_token}` }
+      });
+      const json2 = await res2.json();
+      if (json2.data) setUsers(json2.data);
     } catch {
       toast("Failed to save ID", "error");
     }
@@ -4902,15 +5040,13 @@ function UsersAndIDs({ toast, user }) {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
-      await fetch(
-        `${import.meta.env.VITE_API_URL}/api/admin/users/${userId}/display-id`,
-        {
-          method: "PATCH",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ role: "admin" }),
-        }
-      );
-      setUsers((p) => p.map((u) => u.id === userId ? { ...u, role: "admin" } : u));
+      // Update role to admin directly in Supabase
+      const { error } = await supabase
+        .from("users")
+        .update({ role: "admin" })
+        .eq("id", userId);
+      if (error) throw error;
+      setUsers((p) => p.map((u) => u.id === userId ? { ...u, role: "admin", superAdmin: true } : u));
       toast("Super admin access granted ✓", "success");
     } catch {
       toast("Failed to grant super admin", "error");
@@ -4956,7 +5092,7 @@ function UsersAndIDs({ toast, user }) {
       <div className="sec-title" style={{ marginBottom: 10 }}>
         New signups — pending ID assignment
       </div>
-      {users.filter((u) => !u.uid).length === 0 ? (
+      {users.filter((u) => !u.display_id).length === 0 ? (
         <div
           style={{
             fontSize: 12,
@@ -4969,7 +5105,7 @@ function UsersAndIDs({ toast, user }) {
         </div>
       ) : (
         users
-          .filter((u) => !u.uid)
+          .filter((u) => !u.display_id)
           .map((u) => (
             <div key={u.id} className="uid-row">
               <div
@@ -5004,24 +5140,18 @@ function UsersAndIDs({ toast, user }) {
               </span>
               <input
                 className="uid-input"
-                value={u.uid}
+                value={u.display_id || ""}
                 onChange={(e) => upd(u.id, e.target.value)}
                 placeholder="e.g. MGR-003"
               />
               <button
                 className="btn btn-sm btn-p"
                 onClick={() => {
-                  if (!u.uid) {
+                  if (!u.display_id) {
                     toast("Enter an ID first", "warn");
                     return;
                   }
-                  setUsers((p) =>
-                    p.map((x) => (x.id === u.id ? { ...x, uid: u.uid } : x))
-                  );
-                  toast(
-                    "ID " + u.uid + " assigned to " + u.name + " ✓",
-                    "success"
-                  );
+                  saveDisplayID(u);
                 }}
               >
                 Save
@@ -5057,26 +5187,17 @@ function UsersAndIDs({ toast, user }) {
               </tr>
             </thead>
             <tbody>
-              {[
-                {
-                  n: "Daniyal",
-                  e: "Daniyal@scproject17.onmicrosoft.com",
-                  r: "admin",
-                  id: "ADM-001",
-                  o: "north",
-                  sa: true,
-                },
-                ...users
-                  .filter((u) => u.uid)
+              {users
+                  .filter((u) => u.display_id)
                   .map((u) => ({
-                    n: u.name,
-                    e: u.email,
+                    n: u.full_name || u.name || "—",
+                    e: u.email || "—",
                     r: u.role,
-                    id: u.uid,
+                    id: u.display_id,
                     o: u.office || "—",
-                    sa: u.superAdmin || false,
-                  })),
-              ].map((u, i) => (
+                    sa: u.role === "admin",
+                  }))
+                  .map((u, i) => (
                 <tr key={i} onClick={() => toast(u.n + " · " + u.id + (u.sa ? " · Super Admin" : ""))}>
                   <td className="nm">{u.n}</td>
                   <td style={{ fontSize: 11, color: T.muted }}>{u.e}</td>
