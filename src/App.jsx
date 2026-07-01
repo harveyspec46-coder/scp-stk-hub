@@ -5007,10 +5007,12 @@ function UsersAndIDs({ toast, user }) {
     load();
   }, []);
 
-  const upd = (id, val) =>
-    setUsers((p) => p.map((u) => (u.id === id ? { ...u, display_id: val } : u)));
+  const [idDrafts, setIdDrafts] = useState({});
+  const updDraft = (id, val) =>
+    setIdDrafts((p) => ({ ...p, [id]: val }));
 
   const saveDisplayID = async (u) => {
+    const draftVal = idDrafts[u.id] ?? u.display_id ?? "";
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const token = session?.access_token;
@@ -5019,11 +5021,15 @@ function UsersAndIDs({ toast, user }) {
         {
           method: "PATCH",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ display_id: u.display_id }),
+          body: JSON.stringify({ display_id: draftVal }),
         }
       );
       if (!res.ok) throw new Error();
-      toast("ID " + u.display_id + " assigned to " + u.full_name + " ✓", "success");
+      toast("ID " + draftVal + " assigned to " + u.full_name + " ✓", "success");
+      setIdDrafts((p) => {
+        const { [u.id]: _drop, ...rest } = p;
+        return rest;
+      });
       // Reload to reflect persisted state
       const { data: { session: s2 } } = await supabase.auth.getSession();
       const res2 = await fetch(`${import.meta.env.VITE_API_URL}/api/admin/users`, {
@@ -5092,7 +5098,7 @@ function UsersAndIDs({ toast, user }) {
       <div className="sec-title" style={{ marginBottom: 10 }}>
         New signups — pending ID assignment
       </div>
-      {users.filter((u) => !u.display_id).length === 0 ? (
+      {users.filter((u) => !u.display_id || u.display_id === '').length === 0 ? (
         <div
           style={{
             fontSize: 12,
@@ -5105,7 +5111,7 @@ function UsersAndIDs({ toast, user }) {
         </div>
       ) : (
         users
-          .filter((u) => !u.display_id)
+          .filter((u) => !u.display_id || u.display_id === '')
           .map((u) => (
             <div key={u.id} className="uid-row">
               <div
@@ -5140,14 +5146,15 @@ function UsersAndIDs({ toast, user }) {
               </span>
               <input
                 className="uid-input"
-                value={u.display_id || ""}
-                onChange={(e) => upd(u.id, e.target.value)}
+                value={idDrafts[u.id] ?? u.display_id ?? ""}
+                onChange={(e) => updDraft(u.id, e.target.value)}
                 placeholder="e.g. MGR-003"
               />
               <button
                 className="btn btn-sm btn-p"
                 onClick={() => {
-                  if (!u.display_id) {
+                  const draftVal = idDrafts[u.id] ?? u.display_id ?? "";
+                  if (!draftVal.trim()) {
                     toast("Enter an ID first", "warn");
                     return;
                   }
@@ -5188,7 +5195,7 @@ function UsersAndIDs({ toast, user }) {
             </thead>
             <tbody>
               {users
-                  .filter((u) => u.display_id)
+                  .filter((u) => u.display_id && u.display_id !== '')
                   .map((u) => ({
                     n: u.full_name || u.name || "—",
                     e: u.email || "—",
