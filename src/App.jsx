@@ -3367,6 +3367,10 @@ function CRMBoard({ toast }) {
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 function Tasks({ toast, user }) {
   const [tasks, setTasks] = useState([]);
+  const [assignableUsers, setAssignableUsers] = useState([]);
+  const [assignSearch, setAssignSearch] = useState("");
+  const [newFiles, setNewFiles] = useState([]);
+  const [uploadingFor, setUploadingFor] = useState(null);
   const [filter, setFilter] = useState("all");
   const [showAdd, setShowAdd] = useState(false);
   const [markDoneTask, setMarkDoneTask] = useState(null);
@@ -3380,6 +3384,97 @@ function Tasks({ toast, user }) {
   });
   const setF = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
+  const usersById = React.useMemo(() => {
+    const m = {};
+    assignableUsers.forEach((u) => { m[u.id] = u; });
+    return m;
+  }, [assignableUsers]);
+
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token;
+  };
+
+  const loadTasks = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/tasks`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setTasks(json.data || []);
+    } catch (e) {
+      toast("Failed to load tasks", "error");
+    }
+  };
+
+  const loadAssignableUsers = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/admin/users`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return; // non-admins can't list users yet; dropdown stays empty
+      const json = await res.json();
+      setAssignableUsers((json.data || []).filter((u) => u.role === "admin" || u.role === "manager"));
+    } catch (e) { /* silent — dropdown just stays empty */ }
+  };
+
+  const uploadTaskFile = async (file) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const path = `${session.user.id}/${Date.now()}_${file.name}`;
+    const { error } = await supabase.storage.from("Organization Document").upload(path, file);
+    if (error) throw error;
+    const { data: urlData } = supabase.storage.from("Organization Document").getPublicUrl(path);
+    return { url: urlData.publicUrl, name: file.name };
+  };
+
+  const attachFileToTask = async (taskId, file) => {
+    setUploadingFor(taskId);
+    try {
+      const { url, name } = await uploadTaskFile(file);
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/tasks/${taskId}/attachments`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ file_url: url, file_name: name }),
+      });
+      if (!res.ok) throw new Error();
+      toast("File attached ✓", "success");
+      loadTasks();
+    } catch (e) {
+      toast("Failed to attach file", "error");
+    } finally {
+      setUploadingFor(null);
+    }
+  };
+
+  useEffect(() => {
+    loadTasks();
+    loadAssignableUsers();
+  }, []);
+
+  // Real-time: push a toast + refresh the moment a task-related notification
+  // lands for this user, instead of waiting for a manual refresh.
+  useEffect(() => {
+    if (!user?.id) return;
+    const channel = supabase
+      .channel("tasks-notif-" + user.id)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          const n = payload.new;
+          if (n && ["task_assigned", "task_started", "task_ready_for_review", "task_completed"].includes(n.type)) {
+            toast(n.body, "info");
+            loadTasks();
+          }
+        }
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user?.id]);
+
   const pct = tasks.length
     ? Math.round(
         (tasks.filter((t) => t.status === "done").length / tasks.length) * 100
@@ -3388,17 +3483,12 @@ function Tasks({ toast, user }) {
   const filtered = tasks.filter((t) => filter === "all" || t.status === filter);
   const isAdmin = user?.role === "admin";
 
-  const canMarkDone = (t) => {
-    // Only the assigned person can mark done (or admin override)
-    return isAdmin || t.to.includes("ADM-001");
-  };
-
   return (
     <div>
       {showAdd && (
         <Modal
           title="New task"
-          sub="Only the assigned person can mark it Done"
+          sub="Assignee starts it · you mark it complete"
           onClose={() => setShowAdd(false)}
           footer={
             <>
@@ -3407,26 +3497,49 @@ function Tasks({ toast, user }) {
               </button>
               <button
                 className="btn btn-p"
-                onClick={() => {
+                onClick={async () => {
                   if (!form.title || !form.to) {
                     toast("Title and assignee required", "warn");
                     return;
                   }
-                  setTasks((p) => [
-                    ...p,
-                    {
-                      id: "t" + Date.now(),
-                      title: form.title,
-                      by: "ADM-001 · " + user?.name,
-                      to: form.to,
-                      due: form.due,
-                      status: "open",
-                      pri: form.pri,
-                      note: "",
-                    },
-                  ]);
-                  setShowAdd(false);
-                  toast("Task created — " + form.to + " notified ✓", "success");
+                  try {
+                    const token = await getToken();
+                    const res = await fetch(`${import.meta.env.VITE_API_URL}/api/tasks`, {
+                      method: "POST",
+                      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        job_id: null,
+                        assigned_to: form.to,
+                        title: form.title,
+                        description: form.desc,
+                        priority: form.pri,
+                        due_at: form.due ? new Date(form.due).toISOString() : null,
+                      }),
+                    });
+                    if (!res.ok) throw new Error();
+                    const created = (await res.json()).data;
+                    const assigneeName = usersById[form.to]?.display_id || "assignee";
+                    if (newFiles.length && created?.id) {
+                      for (const file of newFiles) {
+                        try {
+                          const { url, name } = await uploadTaskFile(file);
+                          await fetch(`${import.meta.env.VITE_API_URL}/api/tasks/${created.id}/attachments`, {
+                            method: "POST",
+                            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                            body: JSON.stringify({ file_url: url, file_name: name }),
+                          });
+                        } catch (e) { /* one file failing shouldn't block the rest */ }
+                      }
+                    }
+                    toast("Task created — " + assigneeName + " notified ✓", "success");
+                    setShowAdd(false);
+                    setForm({ title: "", to: "", due: "", pri: "normal", desc: "" });
+                    setAssignSearch("");
+                    setNewFiles([]);
+                    loadTasks();
+                  } catch (e) {
+                    toast("Failed to create task", "error");
+                  }
                 }}
               >
                 Create task
@@ -3445,26 +3558,32 @@ function Tasks({ toast, user }) {
           </div>
           <div className="frow2">
             <div className="ff">
-              <label className="fl">Assign to</label>
-              <select className="fsel" value={form.to} onChange={setF("to")}>
-                <option value="">Select person…</option>
-                {[
-                  "MGR-001 · Dana K.",
-                  "MGR-002 · Sam T.",
-                  "STF-001 · Darnell W.",
-                  "STF-002 · Sam T.",
-                  "STF-003 · Aisha F.",
-                  "STF-004 · Lee R.",
-                ].map((n) => (
-                  <option key={n}>{n}</option>
+              <label className="fl">Assign to (admins/managers only)</label>
+              <input
+                className="fi2"
+                list="task-assignee-list"
+                value={assignSearch}
+                onChange={(e) => {
+                  const typed = e.target.value;
+                  setAssignSearch(typed);
+                  const match = assignableUsers.find(
+                    (u) => `${u.full_name} (${u.display_id || "pending"})` === typed
+                  );
+                  setForm((f) => ({ ...f, to: match ? match.id : "" }));
+                }}
+                placeholder="Search by name…"
+              />
+              <datalist id="task-assignee-list">
+                {assignableUsers.map((u) => (
+                  <option key={u.id} value={`${u.full_name} (${u.display_id || "pending"})`} />
                 ))}
-              </select>
+              </datalist>
             </div>
             <div className="ff">
               <label className="fl">Priority</label>
               <select className="fsel" value={form.pri} onChange={setF("pri")}>
                 <option value="normal">Normal</option>
-                <option value="high">High</option>
+                <option value="urgent">Urgent</option>
               </select>
             </div>
           </div>
@@ -3486,13 +3605,26 @@ function Tasks({ toast, user }) {
               placeholder="Context and details…"
             />
           </div>
+          <div className="ff">
+            <label className="fl">Attachments (optional, multiple allowed)</label>
+            <input
+              type="file"
+              multiple
+              onChange={(e) => setNewFiles(Array.from(e.target.files || []))}
+            />
+            {newFiles.length > 0 && (
+              <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>
+                {newFiles.map((f) => f.name).join(", ")}
+              </div>
+            )}
+          </div>
           <div className="info-box pink" style={{ marginTop: 6 }}>
             <span style={{ color: T.pink, fontWeight: 600 }}>
               Ownership rule:{" "}
             </span>
-            You (assigner) can move Open→In Progress. Only the assigned person
-            can mark Done — which sends you a notification automatically. Admins
-            can override any state.
+            The assignee moves this from Open → In Progress, and can notify
+            you when it's ready without closing it. Only you (the assigner)
+            can mark it Done.
           </div>
         </Modal>
       )}
@@ -3518,17 +3650,25 @@ function Tasks({ toast, user }) {
               </button>
               <button
                 className="btn btn-g"
-                onClick={() => {
-                  setTasks((p) =>
-                    p.map((t) =>
-                      t.id === markDoneTask.id
-                        ? { ...t, status: "done", note: doneNote }
-                        : t
-                    )
-                  );
-                  setMarkDoneTask(null);
-                  setDoneNote("");
-                  toast("Task done — assigner notified ✓", "success");
+                onClick={async () => {
+                  try {
+                    const token = await getToken();
+                    const res = await fetch(
+                      `${import.meta.env.VITE_API_URL}/api/tasks/${markDoneTask.id}/status`,
+                      {
+                        method: "PATCH",
+                        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                        body: JSON.stringify({ status: "done" }),
+                      }
+                    );
+                    if (!res.ok) throw new Error();
+                    setMarkDoneTask(null);
+                    setDoneNote("");
+                    toast("Task done — assigner notified ✓", "success");
+                    loadTasks();
+                  } catch (e) {
+                    toast("Failed to mark task done", "error");
+                  }
                 }}
               >
                 Confirm done ✓
@@ -3545,8 +3685,10 @@ function Tasks({ toast, user }) {
             }}
           >
             Marking this complete will notify{" "}
-            <b style={{ color: T.text }}>{markDoneTask.by}</b> that you've
-            finished.
+            <b style={{ color: T.text }}>
+              {usersById[markDoneTask.created_by]?.display_id || "the assigner"}
+            </b>{" "}
+            that you've finished.
           </div>
           <div className="ff">
             <label className="fl">Completion note (optional)</label>
@@ -3571,13 +3713,15 @@ function Tasks({ toast, user }) {
         <div>
           <div className="page-title">Tasks & Roles</div>
           <div className="page-sub">
-            Board members only · Assigner controls start · Only assigned person
-            marks done · Admin can override
+            Admins assign to admins/managers · Assignee starts it · Assigner
+            marks it done
           </div>
         </div>
-        <button className="btn btn-p" onClick={() => setShowAdd(true)}>
-          + New task
-        </button>
+        {isAdmin && (
+          <button className="btn btn-p" onClick={() => setShowAdd(true)}>
+            + New task
+          </button>
+        )}
       </div>
 
       <div className="g3" style={{ marginBottom: 15 }}>
@@ -3611,9 +3755,9 @@ function Tasks({ toast, user }) {
             State ownership
           </div>
           {[
-            ["Assigner", "Open → In Progress, assign, delete", T.blue],
-            ["Worker", "In Progress → Done (their tasks only)", T.green],
-            ["Admin", "Any state, any time", T.pink],
+            ["Assigner", "Creates the task, marks it Done", T.blue],
+            ["Assignee", "Open → In Progress, then notifies you", T.green],
+            ["Files", "Either side can attach files anytime", T.pink],
           ].map(([r, d, c], i) => (
             <div
               key={i}
@@ -3684,26 +3828,36 @@ function Tasks({ toast, user }) {
                 <th>Due</th>
                 <th>Priority</th>
                 <th>Status</th>
+                <th>Files</th>
                 <th>Action</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((t) => (
-                <tr
-                  key={t.id}
-                  onClick={() => t.note && toast("Note: " + t.note)}
-                >
-                  <td className="nm">{t.title}</td>
+              {filtered.map((t) => {
+                const isAssignee = t.assigned_to === user?.id;
+                const isAssigner = t.created_by === user?.id;
+                return (
+                <tr key={t.id}>
+                  <td className="nm">
+                    {t.title}
+                    {t.ready_for_review && t.status === "in_progress" && (
+                      <div style={{ fontSize: 10, color: T.amber, marginTop: 2 }}>
+                        ⏳ Ready for your review
+                      </div>
+                    )}
+                  </td>
                   <td style={{ fontSize: 11 }}>
-                    <IdBadge uid={t.by.split(" · ")[0]} />
+                    <IdBadge uid={usersById[t.created_by]?.display_id} />
                   </td>
                   <td>
-                    <IdBadge uid={t.to.split(" · ")[0]} />
+                    <IdBadge uid={usersById[t.assigned_to]?.display_id || t.assignee?.display_id} />
                   </td>
-                  <td style={{ fontSize: 11 }}>{t.due}</td>
+                  <td style={{ fontSize: 11 }}>
+                    {t.due_at ? new Date(t.due_at).toLocaleDateString() : "—"}
+                  </td>
                   <td>
-                    {t.pri === "high" ? (
-                      <span className="badge b-r">High</span>
+                    {t.priority === "urgent" ? (
+                      <span className="badge b-r">Urgent</span>
                     ) : (
                       <span className="badge b-gr">Normal</span>
                     )}
@@ -3713,27 +3867,83 @@ function Tasks({ toast, user }) {
                       {t.status.replace("_", " ")}
                     </span>
                   </td>
+                  <td onClick={(e) => e.stopPropagation()} style={{ fontSize: 10 }}>
+                    {(t.attachments || []).map((a) => (
+                      <div key={a.id}>
+                        <a href={a.file_url} target="_blank" rel="noreferrer" style={{ color: T.pink }}>
+                          📎 {a.file_name}
+                        </a>
+                      </div>
+                    ))}
+                    {(isAssignee || isAssigner) && (
+                      <label style={{ cursor: "pointer", color: T.muted, display: "inline-block", marginTop: 2 }}>
+                        {uploadingFor === t.id ? "Uploading…" : "+ Add file"}
+                        <input
+                          type="file"
+                          style={{ display: "none" }}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) attachFileToTask(t.id, file);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                    )}
+                  </td>
                   <td onClick={(e) => e.stopPropagation()}>
                     {t.status === "done" ? (
                       <span className="badge b-g">✓ Done</span>
-                    ) : t.status === "open" ? (
+                    ) : t.status === "open" && isAssignee ? (
                       <button
                         className="btn btn-xs"
                         style={{ borderColor: T.amber, color: T.amber }}
-                        onClick={() => {
-                          setTasks((p) =>
-                            p.map((x) =>
-                              x.id === t.id
-                                ? { ...x, status: "in_progress" }
-                                : x
-                            )
-                          );
-                          toast("Moved to In Progress");
+                        onClick={async () => {
+                          try {
+                            const token = await getToken();
+                            const res = await fetch(
+                              `${import.meta.env.VITE_API_URL}/api/tasks/${t.id}/status`,
+                              {
+                                method: "PATCH",
+                                headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                                body: JSON.stringify({ status: "in_progress" }),
+                              }
+                            );
+                            if (!res.ok) throw new Error();
+                            toast("Moved to In Progress — assigner notified");
+                            loadTasks();
+                          } catch (e) {
+                            toast("Failed to update task", "error");
+                          }
                         }}
                       >
                         Start →
                       </button>
-                    ) : t.status === "in_progress" && canMarkDone(t) ? (
+                    ) : t.status === "in_progress" && isAssignee ? (
+                      <button
+                        className="btn btn-xs"
+                        disabled={t.ready_for_review}
+                        style={{ borderColor: T.pink, color: T.pink }}
+                        onClick={async () => {
+                          try {
+                            const token = await getToken();
+                            const res = await fetch(
+                              `${import.meta.env.VITE_API_URL}/api/tasks/${t.id}/notify-ready`,
+                              {
+                                method: "POST",
+                                headers: { Authorization: `Bearer ${token}` },
+                              }
+                            );
+                            if (!res.ok) throw new Error();
+                            toast("Assigner notified ✓", "success");
+                            loadTasks();
+                          } catch (e) {
+                            toast("Failed to notify assigner", "error");
+                          }
+                        }}
+                      >
+                        {t.ready_for_review ? "Assigner notified ✓" : "I'm done — notify assigner"}
+                      </button>
+                    ) : t.status === "in_progress" && isAssigner ? (
                       <button
                         className="btn btn-xs btn-g"
                         onClick={() => setMarkDoneTask(t)}
@@ -3745,7 +3955,7 @@ function Tasks({ toast, user }) {
                     )}
                   </td>
                 </tr>
-              ))}
+              );})}
             </tbody>
           </table>
         </div>
