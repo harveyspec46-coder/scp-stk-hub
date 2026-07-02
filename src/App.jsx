@@ -310,6 +310,8 @@ tr:last-child td{border-bottom:none;}
 
 /* NOTIFICATIONS */
 .notif-row{display:flex;align-items:flex-start;gap:10px;padding:9px 11px;border-radius:var(--r);background:var(--cd2);border:1px solid var(--br);cursor:pointer;margin-bottom:5px;transition:border-color .13s;}
+.task-row-highlight{animation:taskFlash 2.5s ease-out;}
+@keyframes taskFlash{0%{background:rgba(236,72,153,.25);}100%{background:transparent;}}
 .notif-row:hover{border-color:var(--br2);}
 .notif-row.unread{border-left:2px solid var(--p);}
 .notif-dot{width:6px;height:6px;border-radius:50%;background:var(--p);flex-shrink:0;margin-top:4px;}
@@ -1341,6 +1343,7 @@ function useNotifications(user) {
 function BoardShell({ user, onLogout, toast }) {
   const { notifs, unread, markRead, markAllRead } = useNotifications(user);
   const [page, setPage] = useState("dashboard");
+  const [pendingTaskId, setPendingTaskId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sections = [...new Set(BOARD_NAV.map((n) => n.section))];
   const pageLabel = BOARD_NAV.find((n) => n.key === page)?.label || "Dashboard";
@@ -1366,7 +1369,12 @@ function BoardShell({ user, onLogout, toast }) {
   }, [sidebarOpen]);
 
   const renderPage = () => {
-    const p = { toast, onNav: navTo, user, notifs, markRead, markAllRead };
+    const p = {
+      toast, onNav: navTo, user, notifs, markRead, markAllRead,
+      pendingTaskId,
+      onTaskClick: setPendingTaskId,
+      clearPendingTask: () => setPendingTaskId(null),
+    };
     switch (page) {
       case "dashboard":
         return <BoardDashboard {...p} />;
@@ -3425,7 +3433,7 @@ function CRMBoard({ toast }) {
 }
 
 // ── Tasks ─────────────────────────────────────────────────────────────────────
-function Tasks({ toast, user }) {
+function Tasks({ toast, user, pendingTaskId, clearPendingTask }) {
   const [tasks, setTasks] = useState([]);
   const [assignableUsers, setAssignableUsers] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
@@ -3516,6 +3524,19 @@ function Tasks({ toast, user }) {
     loadTasks();
     loadAssignableUsers();
   }, []);
+
+  // Jump to and highlight a task when arriving via a notification click
+  useEffect(() => {
+    if (!pendingTaskId || tasks.length === 0) return;
+    const el = document.querySelector(`[data-task-id="${pendingTaskId}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.classList.add("task-row-highlight");
+      const t = setTimeout(() => el.classList.remove("task-row-highlight"), 2500);
+      clearPendingTask && clearPendingTask();
+      return () => clearTimeout(t);
+    }
+  }, [pendingTaskId, tasks]);
 
   // Real-time: push a toast + refresh the moment a task-related notification
   // lands for this user, instead of waiting for a manual refresh.
@@ -3900,7 +3921,7 @@ function Tasks({ toast, user }) {
                 const isAssignee = t.assigned_to === user?.id;
                 const isAssigner = t.created_by === user?.id;
                 return (
-                <tr key={t.id}>
+                <tr key={t.id} data-task-id={t.id}>
                   <td className="nm">
                     {t.title}
                     {t.ready_for_review && t.status === "in_progress" && (
@@ -5187,7 +5208,7 @@ function Voting({ toast, user }) {
 }
 
 // ── Notifications ─────────────────────────────────────────────────────────────
-function Notifications({ toast, notifs, markRead, markAllRead }) {
+function Notifications({ toast, notifs, markRead, markAllRead, onNav, onTaskClick }) {
   const unread = notifs.filter((n) => !n.read).length;
   return (
     <div>
@@ -5222,7 +5243,14 @@ function Notifications({ toast, notifs, markRead, markAllRead }) {
         <div
           key={n.id}
           className={`notif-row${!n.read ? " unread" : ""}`}
-          onClick={() => markRead(n.id)}
+          style={{ cursor: n.ref_id ? "pointer" : "default" }}
+          onClick={() => {
+            markRead(n.id);
+            if (n.ref_id) {
+              onTaskClick && onTaskClick(n.ref_id);
+              onNav && onNav("tasks");
+            }
+          }}
         >
           <span style={{ fontSize: 16, flexShrink: 0 }}>🔔</span>
           <div style={{ flex: 1 }}>
@@ -5522,6 +5550,7 @@ const STAFF_NAV = [
 function StaffShell({ user, onLogout, toast }) {
   const { notifs, unread, markRead, markAllRead } = useNotifications(user);
   const [page, setPage] = useState("myjobs");
+  const [pendingTaskId, setPendingTaskId] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pageLabel = STAFF_NAV.find((n) => n.key === page)?.label || "My Jobs";
   const sections = [...new Set(STAFF_NAV.map((n) => n.section))];
@@ -5547,7 +5576,13 @@ function StaffShell({ user, onLogout, toast }) {
   }, [sidebarOpen]);
 
   const renderPage = () => {
-    const p = { toast, user, notifs, markRead, markAllRead };
+    const p = {
+      toast, user, notifs, markRead, markAllRead,
+      onNav: navTo,
+      pendingTaskId,
+      onTaskClick: setPendingTaskId,
+      clearPendingTask: () => setPendingTaskId(null),
+    };
     switch (page) {
       case "myjobs":
         return <StaffMyJobs {...p} />;
@@ -6223,7 +6258,7 @@ function StaffPayStub({ toast, user }) {
 }
 
 // ── Staff: Notifications ──────────────────────────────────────────────────────
-function StaffNotifs({ toast, notifs, markRead, markAllRead }) {
+function StaffNotifs({ toast, notifs, markRead, markAllRead, onNav, onTaskClick }) {
   const unread = notifs.filter((n) => !n.read).length;
   return (
     <div>
@@ -6255,7 +6290,14 @@ function StaffNotifs({ toast, notifs, markRead, markAllRead }) {
         <div
           key={n.id}
           className={`notif-row${!n.read ? " unread" : ""}`}
-          onClick={() => markRead(n.id)}
+          style={{ cursor: n.ref_id ? "pointer" : "default" }}
+          onClick={() => {
+            markRead(n.id);
+            if (n.ref_id) {
+              onTaskClick && onTaskClick(n.ref_id);
+              onNav && onNav("mytasks");
+            }
+          }}
         >
           <span style={{ fontSize: 16, flexShrink: 0 }}>🔔</span>
           <div style={{ flex: 1 }}>
