@@ -4714,7 +4714,7 @@ function Grants({ toast, user }) {
           {selGrant.link && (
             <>
               <div className="divider" />
-              
+                <a
                 href={selGrant.link}
                 target="_blank"
                 rel="noreferrer"
