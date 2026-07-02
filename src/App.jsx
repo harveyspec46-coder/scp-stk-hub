@@ -4347,13 +4347,9 @@ function Finance({ toast }) {
 }
 
 // ── Grants ────────────────────────────────────────────────────────────────────
-function Grants({ toast }) {
-  const [grants, setGrants] = useState({
-    incoming: [],
-    applied: [],
-    in_progress: [],
-    awarded: [],
-  });
+function Grants({ toast, user }) {
+  const [grantsList, setGrantsList] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
   const [selGrant, setSelGrant] = useState(null);
   const [gf, setGF] = useState({
@@ -4367,31 +4363,85 @@ function Grants({ toast }) {
     link: "",
     assigned: "",
   });
+
+  const usersById = React.useMemo(() => {
+    const m = {};
+    allUsers.forEach((u) => { m[u.id] = u; });
+    return m;
+  }, [allUsers]);
+
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token;
+  };
+
+  const loadGrants = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/grants`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setGrantsList(json.data || []);
+    } catch (e) {
+      toast("Failed to load grants", "error");
+    }
+  };
+
+  const loadUsers = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/admin/users`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      setAllUsers(json.data || []);
+    } catch (e) { /* silent */ }
+  };
+
+  useEffect(() => {
+    loadGrants();
+    loadUsers();
+  }, []);
+
+  const grants = React.useMemo(() => {
+    const grouped = { incoming: [], applied: [], in_progress: [], completed: [] };
+    grantsList.forEach((g) => {
+      if (grouped[g.stage]) grouped[g.stage].push(g);
+    });
+    return grouped;
+  }, [grantsList]);
+
   const stages = [
     { key: "incoming", l: "Incoming", c: T.muted },
     { key: "applied", l: "Applied", c: T.blue },
     { key: "in_progress", l: "In Progress", c: T.amber },
-    { key: "awarded", l: "Awarded", c: T.green },
+    { key: "completed", l: "Completed", c: T.green },
   ];
-  const advance = (id, from) => {
-    const keys = ["incoming", "applied", "in_progress", "awarded"];
+
+  const advance = async (id, from) => {
+    const keys = ["incoming", "applied", "in_progress", "completed"];
     const to = keys[keys.indexOf(from) + 1];
     if (!to) {
-      toast("Already at awarded stage");
+      toast("Already at completed stage");
       return;
     }
-    setGrants((prev) => {
-      const g = (prev[from] || []).find((x) => x.id === id);
-      return !g
-        ? prev
-        : {
-            ...prev,
-            [from]: (prev[from] || []).filter((x) => x.id !== id),
-            [to]: [...(prev[to] || []), g],
-          };
-    });
-    toast("Grant advanced to " + to.replace("_", " ") + " ✓", "success");
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/grants/${id}/stage`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ stage: to }),
+      });
+      if (!res.ok) throw new Error();
+      toast("Grant advanced to " + to.replace("_", " ") + " ✓", "success");
+      loadGrants();
+    } catch (e) {
+      toast("Failed to advance grant", "error");
+    }
   };
+
   return (
     <div>
       {showAdd && (
@@ -4405,41 +4455,46 @@ function Grants({ toast }) {
               </button>
               <button
                 className="btn btn-p"
-                onClick={() => {
+                onClick={async () => {
                   if (!gf.title || !gf.funder) {
                     toast("Title and funder required", "warn");
                     return;
                   }
-                  setGrants((prev) => ({
-                    ...prev,
-                    [gf.stage]: [
-                      ...(prev[gf.stage] || []),
-                      {
-                        id: "g" + Date.now(),
+                  try {
+                    const token = await getToken();
+                    const res = await fetch(`${import.meta.env.VITE_API_URL}/api/grants`, {
+                      method: "POST",
+                      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                      body: JSON.stringify({
                         title: gf.title,
                         funder: gf.funder,
                         amount: parseFloat(gf.amount) || 0,
-                        deadline: gf.deadline,
-                        assigned: gf.assigned || null,
+                        stage: gf.stage,
+                        deadline: gf.deadline ? new Date(gf.deadline).toISOString() : null,
                         priority: gf.priority,
-                        desc: gf.desc,
+                        description: gf.desc,
                         link: gf.link,
-                      },
-                    ],
-                  }));
-                  setShowAdd(false);
-                  setGF({
-                    title: "",
-                    funder: "",
-                    amount: "",
-                    stage: "incoming",
-                    deadline: "",
-                    priority: "normal",
-                    desc: "",
-                    link: "",
-                    assigned: "",
-                  });
-                  toast("Grant added ✓", "success");
+                        assigned_to: gf.assigned || null,
+                      }),
+                    });
+                    if (!res.ok) throw new Error();
+                    setShowAdd(false);
+                    setGF({
+                      title: "",
+                      funder: "",
+                      amount: "",
+                      stage: "incoming",
+                      deadline: "",
+                      priority: "normal",
+                      desc: "",
+                      link: "",
+                      assigned: "",
+                    });
+                    toast("Grant added ✓", "success");
+                    loadGrants();
+                  } catch (e) {
+                    toast("Failed to add grant", "error");
+                  }
                 }}
               >
                 Add grant
@@ -4535,16 +4590,13 @@ function Grants({ toast }) {
                 }
               >
                 <option value="">Unassigned</option>
-                {[
-                  "ADM-001 · Jamie R.",
-                  "MGR-001 · Dana K.",
-                  "MGR-002 · Sam T.",
-                  "MGR-003 · Lee R.",
-                ].map((n) => (
-                  <option key={n} value={n.split(" · ")[0]}>
-                    {n}
-                  </option>
-                ))}
+                {allUsers
+                  .filter((u) => u.role === "admin" || u.role === "manager")
+                  .map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.display_id || "ID pending"} · {u.full_name}
+                    </option>
+                  ))}
               </select>
             </div>
           </div>
@@ -4596,13 +4648,13 @@ function Grants({ toast }) {
             {[
               [
                 "Amount",
-                selGrant.amount ? `$${selGrant.amount.toLocaleString()}` : "—",
+                selGrant.amount ? `$${Number(selGrant.amount).toLocaleString()}` : "—",
               ],
-              ["Deadline", selGrant.deadline || "—"],
+              ["Deadline", selGrant.deadline ? new Date(selGrant.deadline).toLocaleDateString() : "—"],
               [
                 "Assigned",
-                selGrant.assigned ? (
-                  <IdBadge uid={selGrant.assigned} />
+                selGrant.assigned_to ? (
+                  <IdBadge uid={usersById[selGrant.assigned_to]?.display_id} />
                 ) : (
                   <span style={{ color: T.muted }}>Unassigned</span>
                 ),
@@ -4644,7 +4696,7 @@ function Grants({ toast }) {
               </div>
             ))}
           </div>
-          {selGrant.desc && (
+          {selGrant.description && (
             <>
               <div className="divider" />
               <div
@@ -4655,14 +4707,14 @@ function Grants({ toast }) {
                   marginBottom: 10,
                 }}
               >
-                {selGrant.desc}
+                {selGrant.description}
               </div>
             </>
           )}
           {selGrant.link && (
             <>
               <div className="divider" />
-              <a
+              
                 href={selGrant.link}
                 target="_blank"
                 rel="noreferrer"
@@ -4718,7 +4770,6 @@ function Grants({ toast }) {
                   className="grant-card"
                   onClick={() => setSelGrant(g)}
                 >
-                  {/* Priority indicator strip */}
                   <div
                     style={{
                       position: "absolute",
@@ -4776,7 +4827,7 @@ function Grants({ toast }) {
                     >
                       🏛️ {g.funder}
                     </div>
-                    {g.desc && (
+                    {g.description && (
                       <div
                         style={{
                           fontSize: 10,
@@ -4790,7 +4841,7 @@ function Grants({ toast }) {
                           WebkitBoxOrient: "vertical",
                         }}
                       >
-                        {g.desc}
+                        {g.description}
                       </div>
                     )}
                     {g.amount > 0 && (
@@ -4802,7 +4853,7 @@ function Grants({ toast }) {
                           marginBottom: 5,
                         }}
                       >
-                        ${g.amount.toLocaleString()}
+                        ${Number(g.amount).toLocaleString()}
                       </div>
                     )}
                     <div
@@ -4810,16 +4861,16 @@ function Grants({ toast }) {
                         display: "flex",
                         gap: 4,
                         flexWrap: "wrap",
-                        marginBottom: key !== "awarded" ? 6 : 0,
+                        marginBottom: key !== "completed" ? 6 : 0,
                       }}
                     >
                       {g.deadline && (
                         <span className="badge b-a" style={{ fontSize: 9 }}>
-                          {g.deadline}
+                          {new Date(g.deadline).toLocaleDateString()}
                         </span>
                       )}
-                      {g.assigned ? (
-                        <IdBadge uid={g.assigned} />
+                      {g.assigned_to ? (
+                        <IdBadge uid={usersById[g.assigned_to]?.display_id} />
                       ) : (
                         <span className="badge b-gr" style={{ fontSize: 9 }}>
                           Unassigned
@@ -4831,7 +4882,7 @@ function Grants({ toast }) {
                         </span>
                       )}
                     </div>
-                    {key !== "awarded" && (
+                    {key !== "completed" && (
                       <button
                         className="btn btn-xs btn-p"
                         style={{ marginTop: 3 }}
