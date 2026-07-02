@@ -799,6 +799,83 @@ function TagInput({ value, onChange, placeholder }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // AUTH SCREEN — Login + Signup with live domain detection
 // ═══════════════════════════════════════════════════════════════════════════════
+function ResetPasswordScreen({ onDone }) {
+  const [pass, setPass] = useState("");
+  const [pass2, setPass2] = useState("");
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const handleSetPassword = async () => {
+    setErr("");
+    if (pass.length < 8) { setErr("Password must be at least 8 characters."); return; }
+    if (pass !== pass2) { setErr("Passwords do not match."); return; }
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password: pass });
+      if (error) throw error;
+      setOk(true);
+      await supabase.auth.signOut();
+    } catch (e) {
+      setErr(e?.message || "Failed to update password. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="auth-bg">
+      <div className="auth-card">
+        <div className="auth-logo" style={{ marginBottom: 20 }}>
+          <div className="auth-mark">S</div>
+          <div>
+            <div className="auth-name">SCP-<span>STK</span> Hub</div>
+            <div className="auth-org">Set a new password</div>
+          </div>
+        </div>
+        {ok ? (
+          <div className="auth-msg-ok">
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>✓ Password updated</div>
+            You can now sign in with your new password.
+            <div style={{ marginTop: 12 }}>
+              <button className="auth-btn" style={{ marginTop: 0 }} onClick={onDone}>
+                Go to sign in →
+              </button>
+            </div>
+          </div>
+        ) : (
+          <>
+            {err && <div className="auth-msg-err">{err}</div>}
+            <div className="auth-field">
+              <label className="auth-lbl">New password</label>
+              <input
+                className="auth-inp"
+                type="password"
+                value={pass}
+                onChange={(e) => setPass(e.target.value)}
+                placeholder="Minimum 8 characters"
+              />
+            </div>
+            <div className="auth-field">
+              <label className="auth-lbl">Confirm new password</label>
+              <input
+                className={`auth-inp${pass2.length > 0 ? (pass === pass2 ? " valid" : " invalid") : ""}`}
+                type="password"
+                value={pass2}
+                onChange={(e) => setPass2(e.target.value)}
+                placeholder="Re-enter password"
+                onKeyDown={(e) => e.key === "Enter" && handleSetPassword()}
+              />
+            </div>
+            <button className="auth-btn" onClick={handleSetPassword} disabled={loading}>
+              {loading ? "Updating…" : "Update password →"}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 function AuthScreen({ onAuth }) {
   const [tab, setTab]       = useState("login");
   const { toasts, toast }   = useToast();
@@ -808,6 +885,30 @@ function AuthScreen({ onAuth }) {
   const [lPass,  setLPass]  = useState("");
   const [lErr,   setLErr]   = useState("");
   const [lLoad,  setLLoad]  = useState(false);
+
+  // ── Forgot password state ────────────────────────────────
+  const [showForgot, setShowForgot] = useState(false);
+  const [fEmail, setFEmail] = useState("");
+  const [fErr, setFErr] = useState("");
+  const [fSent, setFSent] = useState(false);
+  const [fLoad, setFLoad] = useState(false);
+
+  const handleForgotPassword = async () => {
+    setFErr("");
+    if (!fEmail.trim()) { setFErr("Enter your email address."); return; }
+    setFLoad(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(fEmail.trim(), {
+        redirectTo: window.location.origin,
+      });
+      if (error) throw error;
+      setFSent(true);
+    } catch (err) {
+      setFErr(err?.message || "Failed to send reset email. Please try again.");
+    } finally {
+      setFLoad(false);
+    }
+  };
 
   // ── Signup state ─────────────────────────────────────────
   const [sName,  setSName]  = useState("");
@@ -906,6 +1007,7 @@ function AuthScreen({ onAuth }) {
     setLErr(""); setSErr(""); setSOk(false);
     setLEmail(""); setLPass("");
     setSName(""); setSEmail(""); setSPass(""); setSPass2("");
+    setShowForgot(false); setFEmail(""); setFErr(""); setFSent(false);
   };
 
   return (
@@ -965,12 +1067,56 @@ function AuthScreen({ onAuth }) {
             <button className="auth-btn" onClick={handleLogin} disabled={lLoad}>
               {lLoad ? "Signing in…" : "Sign in →"}
             </button>
+            <div className="auth-note" style={{ marginBottom: 4 }}>
+              <span className="lnk" onClick={() => { setShowForgot(true); setFErr(""); setFSent(false); }}>
+                Forgot password?
+              </span>
+            </div>
             <div className="auth-note">
               New here?{" "}
               <span className="lnk" onClick={() => { setTab("signup"); resetForms(); }}>
                 Create an account
               </span>
             </div>
+
+            {showForgot && (
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
+                {fSent ? (
+                  <div className="auth-msg-ok">
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>✓ Reset link sent</div>
+                    Check {fEmail} for a link to reset your password.
+                    <div style={{ marginTop: 10 }}>
+                      <span className="lnk" onClick={() => { setShowForgot(false); setFSent(false); setFEmail(""); }}>
+                        Back to sign in
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {fErr && <div className="auth-msg-err">{fErr}</div>}
+                    <div className="auth-field">
+                      <label className="auth-lbl">Reset password for</label>
+                      <input
+                        className="auth-inp"
+                        type="email"
+                        value={fEmail}
+                        onChange={(e) => setFEmail(e.target.value)}
+                        placeholder="your@email.com"
+                        onKeyDown={(e) => e.key === "Enter" && handleForgotPassword()}
+                      />
+                    </div>
+                    <button className="auth-btn" onClick={handleForgotPassword} disabled={fLoad}>
+                      {fLoad ? "Sending…" : "Send reset link →"}
+                    </button>
+                    <div className="auth-note">
+                      <span className="lnk" onClick={() => setShowForgot(false)}>
+                        Cancel
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </>
         )}
 
@@ -9598,6 +9744,7 @@ function ESignatures({ toast, user }) {
 export default function App() {
   const [user,    setUser]    = useState(null);
   const [loading, setLoading] = useState(true);  // checking existing session
+  const [isRecovery, setIsRecovery] = useState(false);
   const { toasts, toast } = useToast();
 
   // ── Inject global CSS ─────────────────────────────────────
@@ -9622,6 +9769,11 @@ export default function App() {
     // Listen for login / logout events
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        if (event === "PASSWORD_RECOVERY") {
+          setIsRecovery(true);
+          setLoading(false);
+          return;
+        }
         if (event === "SIGNED_OUT" || !session) {
           setUser(null);
         } else if (session?.user) {
@@ -9640,6 +9792,13 @@ export default function App() {
     setUser(null);
   };
 
+  if (isRecovery)
+    return (
+      <>
+        <ResetPasswordScreen onDone={async () => { setIsRecovery(false); setUser(null); }} />
+        <Toasts toasts={toasts} />
+      </>
+    );
   if (loading)
     return (
       <div style={{
