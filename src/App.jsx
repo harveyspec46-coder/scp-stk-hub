@@ -3368,6 +3368,7 @@ function CRMBoard({ toast }) {
 function Tasks({ toast, user }) {
   const [tasks, setTasks] = useState([]);
   const [assignableUsers, setAssignableUsers] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
   const [assignSearch, setAssignSearch] = useState("");
   const [newFiles, setNewFiles] = useState([]);
   const [uploadingFor, setUploadingFor] = useState(null);
@@ -3386,9 +3387,9 @@ function Tasks({ toast, user }) {
 
   const usersById = React.useMemo(() => {
     const m = {};
-    assignableUsers.forEach((u) => { m[u.id] = u; });
+    allUsers.forEach((u) => { m[u.id] = u; });
     return m;
-  }, [assignableUsers]);
+  }, [allUsers]);
 
   const getToken = async () => {
     const { data: { session } } = await supabase.auth.getSession();
@@ -3416,7 +3417,9 @@ function Tasks({ toast, user }) {
       });
       if (!res.ok) return; // non-admins can't list users yet; dropdown stays empty
       const json = await res.json();
-      setAssignableUsers((json.data || []).filter((u) => u.role === "admin" || u.role === "manager"));
+      const users = json.data || [];
+      setAllUsers(users);
+      setAssignableUsers(users.filter((u) => u.role === "admin" || u.role === "manager"));
     } catch (e) { /* silent — dropdown just stays empty */ }
   };
 
