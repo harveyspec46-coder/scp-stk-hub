@@ -1281,7 +1281,65 @@ const BOARD_NAV = [
   { key: "auditlog", label: "Audit Log", icon: "📜", section: "Admin" },
 ];
 
+function useNotifications(user) {
+  const [notifs, setNotifs] = useState([]);
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token;
+  };
+  const load = async () => {
+    if (!user?.id) return;
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/notifications`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      setNotifs(json.data || []);
+    } catch (e) { /* silent */ }
+  };
+  useEffect(() => { load(); }, [user?.id]);
+  useEffect(() => {
+    if (!user?.id) return;
+    const channel = supabase
+      .channel("notif-bell-" + user.id)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` },
+        (payload) => setNotifs((p) => [payload.new, ...p])
+      )
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user?.id]);
+  const markRead = async (id) => {
+    setNotifs((p) => p.map((n) => (n.id === id ? { ...n, read: true } : n)));
+    try {
+      const token = await getToken();
+      await fetch(`${import.meta.env.VITE_API_URL}/api/notifications/${id}/read`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch (e) { /* silent */ }
+  };
+  const markAllRead = async () => {
+    const unreadIds = notifs.filter((n) => !n.read).map((n) => n.id);
+    setNotifs((p) => p.map((n) => ({ ...n, read: true })));
+    const token = await getToken();
+    await Promise.all(
+      unreadIds.map((id) =>
+        fetch(`${import.meta.env.VITE_API_URL}/api/notifications/${id}/read`, {
+          method: "PATCH",
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {})
+      )
+    );
+  };
+  const unread = notifs.filter((n) => !n.read).length;
+  return { notifs, unread, markRead, markAllRead };
+}
 function BoardShell({ user, onLogout, toast }) {
+  const { notifs, unread, markRead, markAllRead } = useNotifications(user);
   const [page, setPage] = useState("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const sections = [...new Set(BOARD_NAV.map((n) => n.section))];
@@ -1308,7 +1366,7 @@ function BoardShell({ user, onLogout, toast }) {
   }, [sidebarOpen]);
 
   const renderPage = () => {
-    const p = { toast, onNav: navTo, user };
+    const p = { toast, onNav: navTo, user, notifs, markRead, markAllRead };
     switch (page) {
       case "dashboard":
         return <BoardDashboard {...p} />;
@@ -1449,18 +1507,20 @@ function BoardShell({ user, onLogout, toast }) {
               style={{ position: "relative" }}
             >
               🔔
-              <span
-                style={{
-                  position: "absolute",
-                  top: 2,
-                  right: 2,
-                  width: 7,
-                  height: 7,
-                  borderRadius: "50%",
-                  background: T.pink,
-                  border: "1px solid var(--dk)",
-                }}
-              />
+              {unread > 0 && (
+                <span
+                  style={{
+                    position: "absolute",
+                    top: 2,
+                    right: 2,
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    background: T.pink,
+                    border: "1px solid var(--dk)",
+                  }}
+                />
+              )}
             </button>
             <button
               className="btn btn-p btn-sm"
@@ -5127,10 +5187,7 @@ function Voting({ toast, user }) {
 }
 
 // ── Notifications ─────────────────────────────────────────────────────────────
-function Notifications({ toast }) {
-  const [notifs, setNotifs] = useState([]);
-  const markRead = (id) =>
-    setNotifs((p) => p.map((n) => (n.id === id ? { ...n, read: true } : n)));
+function Notifications({ toast, notifs, markRead, markAllRead }) {
   const unread = notifs.filter((n) => !n.read).length;
   return (
     <div>
@@ -5153,7 +5210,7 @@ function Notifications({ toast }) {
           <button
             className="btn btn-sm"
             onClick={() => {
-              setNotifs((p) => p.map((n) => ({ ...n, read: true })));
+              markAllRead();
               toast("All marked as read ✓", "success");
             }}
           >
@@ -5167,26 +5224,15 @@ function Notifications({ toast }) {
           className={`notif-row${!n.read ? " unread" : ""}`}
           onClick={() => markRead(n.id)}
         >
-          <span style={{ fontSize: 16, flexShrink: 0 }}>{n.type}</span>
+          <span style={{ fontSize: 16, flexShrink: 0 }}>🔔</span>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 12, color: T.text, lineHeight: 1.4 }}>
               {n.body}
             </div>
             <div style={{ fontSize: 10, color: T.muted, marginTop: 2 }}>
-              {n.time}
+              {n.created_at ? new Date(n.created_at).toLocaleString() : ""}
             </div>
           </div>
-          {n.action && (
-            <button
-              className="btn btn-xs btn-g"
-              onClick={(e) => {
-                e.stopPropagation();
-                toast("Job marked complete ✓", "success");
-              }}
-            >
-              Mark complete
-            </button>
-          )}
           {!n.read && <div className="notif-dot" />}
         </div>
       ))}
@@ -5474,6 +5520,7 @@ const STAFF_NAV = [
 ];
 
 function StaffShell({ user, onLogout, toast }) {
+  const { notifs, unread, markRead, markAllRead } = useNotifications(user);
   const [page, setPage] = useState("myjobs");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const pageLabel = STAFF_NAV.find((n) => n.key === page)?.label || "My Jobs";
@@ -5500,7 +5547,7 @@ function StaffShell({ user, onLogout, toast }) {
   }, [sidebarOpen]);
 
   const renderPage = () => {
-    const p = { toast, user };
+    const p = { toast, user, notifs, markRead, markAllRead };
     switch (page) {
       case "myjobs":
         return <StaffMyJobs {...p} />;
@@ -5527,7 +5574,7 @@ function StaffShell({ user, onLogout, toast }) {
       key: "mynotifs",
       icon: "🔔",
       label: "Alerts",
-      dot: true,
+      dot: unread > 0,
     },
   ];
 
@@ -5632,18 +5679,20 @@ function StaffShell({ user, onLogout, toast }) {
               style={{ position: "relative" }}
             >
               🔔
-              <span
-                style={{
-                  position: "absolute",
-                  top: 2,
-                  right: 2,
-                  width: 7,
-                  height: 7,
-                  borderRadius: "50%",
-                  background: T.pink,
-                  border: "1px solid var(--dk)",
-                }}
-              />
+              {unread > 0 && (
+                <span
+                  style={{
+                    position: "absolute",
+                    top: 2,
+                    right: 2,
+                    width: 7,
+                    height: 7,
+                    borderRadius: "50%",
+                    background: T.pink,
+                    border: "1px solid var(--dk)",
+                  }}
+                />
+              )}
             </button>
           </div>
         </div>
@@ -6174,8 +6223,7 @@ function StaffPayStub({ toast, user }) {
 }
 
 // ── Staff: Notifications ──────────────────────────────────────────────────────
-function StaffNotifs({ toast }) {
-  const [notifs, setNotifs] = useState([]);
+function StaffNotifs({ toast, notifs, markRead, markAllRead }) {
   const unread = notifs.filter((n) => !n.read).length;
   return (
     <div>
@@ -6195,7 +6243,7 @@ function StaffNotifs({ toast }) {
           <button
             className="btn btn-sm"
             onClick={() => {
-              setNotifs((p) => p.map((n) => ({ ...n, read: true })));
+              markAllRead();
               toast("All read ✓", "success");
             }}
           >
@@ -6207,32 +6255,17 @@ function StaffNotifs({ toast }) {
         <div
           key={n.id}
           className={`notif-row${!n.read ? " unread" : ""}`}
-          onClick={() =>
-            setNotifs((p) =>
-              p.map((x) => (x.id === n.id ? { ...x, read: true } : x))
-            )
-          }
+          onClick={() => markRead(n.id)}
         >
-          <span style={{ fontSize: 16, flexShrink: 0 }}>{n.type}</span>
+          <span style={{ fontSize: 16, flexShrink: 0 }}>🔔</span>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 12, color: T.text, lineHeight: 1.4 }}>
               {n.body}
             </div>
             <div style={{ fontSize: 10, color: T.muted, marginTop: 2 }}>
-              {n.time}
+              {n.created_at ? new Date(n.created_at).toLocaleString() : ""}
             </div>
           </div>
-          {n.action && (
-            <button
-              className="btn btn-xs btn-g"
-              onClick={(e) => {
-                e.stopPropagation();
-                toast("Job marked complete ✓", "success");
-              }}
-            >
-              Mark done
-            </button>
-          )}
           {!n.read && <div className="notif-dot" />}
         </div>
       ))}
