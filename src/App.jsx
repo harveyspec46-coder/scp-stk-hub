@@ -2818,14 +2818,16 @@ function Participants({ toast }) {
 // ── CRM — Job Funnel (Board view) ────────────────────────────────────────────
 function CRMBoard({ toast }) {
   const [tab, setTab] = useState("jobs");
-  const [jobs, setJobs] = useState({ job_scheduled: [], staff_assigned: [], arrived_at_site: [], completed: [], invoiced: [] });
+  const [board, setBoard] = useState({ job_scheduled: [], staff_assigned: [], arrived_at_site: [], completed: [], invoiced: [] });
+  const [clients, setClients] = useState([]);
+  const [allUsers, setAllUsers] = useState([]);
   const [sugg, setSugg] = useState([]);
   const [search, setSearch] = useState("");
   const [svcF, setSvcF] = useState("");
   const [selJob, setSelJob] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
-  const [dragItem, setDragItem] = useState(null); // { job, fromStage }
-  const [dragOver, setDragOver] = useState(null); // stage key
+  const [dragItem, setDragItem] = useState(null);
+  const [dragOver, setDragOver] = useState(null);
   const [af, setAF] = useState({
     client: "",
     phone: "",
@@ -2835,12 +2837,58 @@ function CRMBoard({ toast }) {
     tools: [],
     price: "",
     scheduled: "",
-    estHours: "",
   });
   const setA = (k) => (v) => setAF((f) => ({ ...f, [k]: v }));
   const setAe = (k) => (e) => setAF((f) => ({ ...f, [k]: e.target.value }));
 
-  const allJobs = Object.values(jobs).flat();
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token;
+  };
+
+  const loadJobs = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/crm/jobs`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setBoard(json.data || { job_scheduled: [], staff_assigned: [], arrived_at_site: [], completed: [], invoiced: [] });
+    } catch (e) {
+      toast("Failed to load jobs", "error");
+    }
+  };
+
+  const loadClients = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/crm/clients`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setClients(json.data || []);
+    } catch (e) { /* silent */ }
+  };
+
+  const loadUsers = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/admin/users`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const json = await res.json();
+      setAllUsers(json.data || []);
+    } catch (e) { /* silent */ }
+  };
+
+  useEffect(() => {
+    loadJobs();
+    loadClients();
+    loadUsers();
+  }, []);
+
+  const allJobs = Object.values(board).flat();
   const STAGES = [
     "job_scheduled",
     "staff_assigned",
@@ -2863,73 +2911,126 @@ function CRMBoard({ toast }) {
     invoiced: "🧾",
   };
 
-  const advance = (jobId, newStage) => {
-    setJobs((prev) => {
-      const u = {};
-      for (const [s, l] of Object.entries(prev))
-        u[s] = l.filter((j) => j.id !== jobId);
-      const job = allJobs.find((j) => j.id === jobId);
-      if (job)
-        u[newStage] = [...(u[newStage] || []), { ...job, stage: newStage }];
-      return u;
-    });
+  const advance = async (jobId, newStage) => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/crm/jobs/${jobId}/stage`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ stage: newStage }),
+      });
+      if (!res.ok) throw new Error();
+      await loadJobs();
+      if (selJob?.id === jobId) {
+        setSelJob((prev) => (prev ? { ...prev, stage: newStage } : prev));
+      }
+    } catch (e) {
+      toast("Failed to advance stage", "error");
+    }
   };
 
-  const saveJob = () => {
+  const saveJob = async () => {
     if (!af.client || !af.address || !af.service) {
       toast("Client, address, and job type required", "warn");
       return;
     }
-    const nj = {
-      id: "j" + Date.now(),
-      service: af.service,
-      address: af.address,
-      client: af.client,
-      phone: af.phone,
-      price: parseFloat(af.price) || 0,
-      tools: af.tools,
-      scheduled: af.scheduled,
-      estHours: parseFloat(af.estHours) || null,
-      desc: af.desc,
-      assignees: [],
-      stage: "job_scheduled",
-    };
-    setJobs((prev) => ({
-      ...prev,
-      job_scheduled: [nj, ...prev.job_scheduled],
-    }));
-    if (af.service && !sugg.includes(af.service))
-      setSugg((p) => [af.service, ...p]);
-    setShowAdd(false);
-    setAF({
-      client: "",
-      phone: "",
-      address: "",
-      service: "",
-      desc: "",
-      tools: [],
-      price: "",
-      scheduled: "",
-      estHours: "",
-    });
-    toast("Job created ✓", "success");
+    try {
+      const token = await getToken();
+      const clientRes = await fetch(`${import.meta.env.VITE_API_URL}/api/crm/clients`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ full_name: af.client, phone: af.phone, address: af.address, email: "", notes: "" }),
+      });
+      if (!clientRes.ok) throw new Error("client");
+      const client = (await clientRes.json()).data;
+
+      const jobRes = await fetch(`${import.meta.env.VITE_API_URL}/api/crm/jobs`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: client.id,
+          service_type: af.service,
+          address: af.address,
+          description: af.desc,
+          tools_used: af.tools,
+          scheduled_at: af.scheduled ? new Date(af.scheduled).toISOString() : null,
+          price: parseFloat(af.price) || 0,
+          notes: "",
+        }),
+      });
+      if (!jobRes.ok) throw new Error("job");
+
+      if (af.service && !sugg.includes(af.service)) setSugg((p) => [af.service, ...p]);
+      setShowAdd(false);
+      setAF({ client: "", phone: "", address: "", service: "", desc: "", tools: [], price: "", scheduled: "" });
+      toast("Job created ✓", "success");
+      loadJobs();
+      loadClients();
+    } catch (e) {
+      toast("Failed to create job", "error");
+    }
+  };
+
+  const toggleAssign = async (job, u) => {
+    const alreadyAssigned = (job.assignments || []).some((a) => a.user_id === u.id);
+    try {
+      const token = await getToken();
+      if (alreadyAssigned) {
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/api/crm/jobs/${job.id}/assign/${u.id}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) throw new Error();
+      } else {
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/api/crm/jobs/${job.id}/assign`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: u.id, role_on_job: "support" }),
+        });
+        if (!res.ok) throw new Error();
+      }
+      toast((alreadyAssigned ? "Removed " : "Assigned ") + u.full_name + " ✓", "success");
+      const token2 = await getToken();
+      const res2 = await fetch(`${import.meta.env.VITE_API_URL}/api/crm/jobs`, {
+        headers: { Authorization: `Bearer ${token2}` },
+      });
+      const json2 = await res2.json();
+      const freshBoard = json2.data || {};
+      setBoard(freshBoard);
+      const flat = Object.values(freshBoard).flat();
+      const fresh = flat.find((j) => j.id === job.id);
+      if (fresh) setSelJob(fresh);
+    } catch (e) {
+      toast("Failed to update assignment", "error");
+    }
   };
 
   const fList = (list) =>
     list.filter(
       (j) =>
         (!search ||
-          j.client.toLowerCase().includes(search.toLowerCase()) ||
-          j.service.toLowerCase().includes(search.toLowerCase())) &&
-        (!svcF || j.service.toLowerCase().includes(svcF.toLowerCase()))
+          (j.client?.full_name || "").toLowerCase().includes(search.toLowerCase()) ||
+          j.service_type.toLowerCase().includes(search.toLowerCase())) &&
+        (!svcF || j.service_type.toLowerCase().includes(svcF.toLowerCase()))
     );
+
+  const staffJobCounts = React.useMemo(() => {
+    const m = {};
+    allJobs.forEach((j) => {
+      if (j.stage === "completed" || j.stage === "invoiced") return;
+      (j.assignments || []).forEach((a) => {
+        m[a.user_id] = (m[a.user_id] || 0) + 1;
+      });
+    });
+    return m;
+  }, [allJobs]);
 
   return (
     <div>
       {selJob && (
         <Modal
-          title={selJob.service}
-          sub={selJob.client + " · " + selJob.address}
+          title={selJob.service_type}
+          sub={(selJob.client?.full_name || "Client") + " · " + selJob.address}
           onClose={() => setSelJob(null)}
           footer={
             <>
@@ -2940,11 +3041,7 @@ function CRMBoard({ toast }) {
                 <button
                   className="btn btn-p"
                   onClick={() => {
-                    advance(
-                      selJob.id,
-                      STAGES[STAGES.indexOf(selJob.stage) + 1]
-                    );
-                    setSelJob(null);
+                    advance(selJob.id, STAGES[STAGES.indexOf(selJob.stage) + 1]);
                     toast("Stage advanced ✓", "success");
                   }}
                 >
@@ -2970,17 +3067,13 @@ function CRMBoard({ toast }) {
                   {stageLabel(selJob.stage || "")}
                 </span>,
               ],
-              ["Price", "$" + (selJob.price?.toFixed(2) || "0.00")],
-              ["Client phone", selJob.phone || "—"],
-              [
-                "Est. time",
-                selJob.estHours ? selJob.estHours + "h" : "Not set",
-              ],
-              ["Scheduled", selJob.scheduled || "—"],
+              ["Price", "$" + (Number(selJob.price)?.toFixed(2) || "0.00")],
+              ["Client phone", selJob.client?.phone || "—"],
+              ["Scheduled", selJob.scheduled_at ? new Date(selJob.scheduled_at).toLocaleString() : "—"],
               [
                 "Assigned staff",
-                selJob.assignees?.length ? (
-                  selJob.assignees.join(", ")
+                (selJob.assignments || []).length ? (
+                  selJob.assignments.map((a) => a.user?.full_name || a.user_id).join(", ")
                 ) : (
                   <span style={{ color: T.red }}>Unassigned</span>
                 ),
@@ -3007,35 +3100,23 @@ function CRMBoard({ toast }) {
               </div>
             ))}
           </div>
-          {selJob.desc && (
+          {selJob.description && (
             <>
               <div className="divider" />
               <div style={{ fontSize: 12, color: T.sub, lineHeight: 1.6 }}>
-                {selJob.desc}
+                {selJob.description}
               </div>
             </>
           )}
-          {selJob.tools?.length > 0 && (
+          {selJob.tools_used?.length > 0 && (
             <>
               <div className="divider" />
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                {selJob.tools.map((t, i) => (
+                {selJob.tools_used.map((t, i) => (
                   <span key={i} className="badge b-gr">
                     {t}
                   </span>
                 ))}
-              </div>
-            </>
-          )}
-          {selJob.estHours && (
-            <>
-              <div className="divider" />
-              <div className="info-box amber">
-                <span style={{ color: T.amber, fontWeight: 600 }}>
-                  ⏱ Auto-notification at scheduled time + {selJob.estHours}h:{" "}
-                </span>
-                Assigned worker(s) will be asked "Is this job finished?" ·
-                Assigner receives follow-up alert
               </div>
             </>
           )}
@@ -3061,46 +3142,15 @@ function CRMBoard({ toast }) {
                 marginBottom: 8,
               }}
             >
-              {[].map((s) => {
-                const assigned = selJob.assignees?.some((a) =>
-                  a.includes(s.uid)
-                );
+              {allUsers.map((u) => {
+                const assigned = (selJob.assignments || []).some((a) => a.user_id === u.id);
+                const activeCount = staffJobCounts[u.id] || 0;
                 return (
                   <button
-                    key={s.id}
+                    key={u.id}
                     className={`btn btn-sm${assigned ? " btn-p" : ""}`}
                     style={{ display: "flex", alignItems: "center", gap: 5 }}
-                    onClick={() => {
-                      setJobs((prev) => {
-                        const upd = {};
-                        for (const [st, list] of Object.entries(prev)) {
-                          upd[st] = list.map((j) => {
-                            if (j.id !== selJob.id) return j;
-                            const cur = j.assignees || [];
-                            const tag = s.uid + " · " + s.name;
-                            const next = cur.includes(tag)
-                              ? cur.filter((x) => x !== tag)
-                              : [...cur, tag];
-                            return { ...j, assignees: next };
-                          });
-                        }
-                        return upd;
-                      });
-                      setSelJob((prev) => {
-                        const cur = prev.assignees || [];
-                        const tag = s.uid + " · " + s.name;
-                        return {
-                          ...prev,
-                          assignees: cur.includes(tag)
-                            ? cur.filter((x) => x !== tag)
-                            : [...cur, tag],
-                        };
-                      });
-                      toast(
-                        (assigned ? "Removed " : "Assigned ") + s.name + " ✓",
-                        "success"
-                      );
-                    }}
+                    onClick={() => toggleAssign(selJob, u)}
                   >
                     <span
                       style={{
@@ -3122,7 +3172,7 @@ function CRMBoard({ toast }) {
                     >
                       {assigned ? "✓" : ""}
                     </span>
-                    <span>{s.name}</span>
+                    <span>{u.full_name}</span>
                     <span
                       style={{
                         fontSize: 9,
@@ -3130,9 +3180,9 @@ function CRMBoard({ toast }) {
                         fontFamily: "monospace",
                       }}
                     >
-                      {s.uid}
+                      {u.display_id || "ID pending"}
                     </span>
-                    {s.jobs >= 3 && (
+                    {activeCount >= 3 && (
                       <span style={{ fontSize: 8, color: T.amber }}>⚠</span>
                     )}
                   </button>
@@ -3142,22 +3192,6 @@ function CRMBoard({ toast }) {
             <div style={{ fontSize: 10, color: T.muted }}>
               ⚠ orange = already at 3+ active jobs · Click to toggle assignment
             </div>
-          </div>
-          <div
-            style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 10 }}
-          >
-            <button
-              className="btn btn-sm"
-              onClick={() => toast("Task added to job ✓", "success")}
-            >
-              + Add task
-            </button>
-            <button
-              className="btn btn-sm"
-              onClick={() => toast("Hours logged ✓", "success")}
-            >
-              + Log hours
-            </button>
           </div>
         </Modal>
       )}
@@ -3220,33 +3254,15 @@ function CRMBoard({ toast }) {
               suggestions={sugg}
             />
           </div>
-          <div className="frow2">
-            <div className="ff">
-              <label className="fl">Quoted price ($)</label>
-              <input
-                className="fi2"
-                type="number"
-                value={af.price}
-                onChange={setAe("price")}
-                placeholder="150.00"
-              />
-            </div>
-            <div className="ff">
-              <label className="fl">
-                Estimated hours{" "}
-                <span style={{ color: T.amber, fontWeight: 400 }}>
-                  — triggers notification
-                </span>
-              </label>
-              <input
-                className="fi2"
-                type="number"
-                step="0.5"
-                value={af.estHours}
-                onChange={setAe("estHours")}
-                placeholder="e.g. 3"
-              />
-            </div>
+          <div className="ff">
+            <label className="fl">Quoted price ($)</label>
+            <input
+              className="fi2"
+              type="number"
+              value={af.price}
+              onChange={setAe("price")}
+              placeholder="150.00"
+            />
           </div>
           <div className="ff">
             <label className="fl">Tools / equipment</label>
@@ -3274,16 +3290,6 @@ function CRMBoard({ toast }) {
               onChange={setAe("scheduled")}
             />
           </div>
-          {af.estHours && (
-            <div className="info-box amber">
-              <span style={{ color: T.amber, fontWeight: 600 }}>
-                ⏱ Will notify at scheduled time + {af.estHours}h:{" "}
-              </span>
-              Worker: "Is {af.service || "the job"} at{" "}
-              {af.address || "the site"} finished?" · You: "Estimated time
-              elapsed — follow up with {af.client || "the worker"}"
-            </div>
-          )}
         </Modal>
       )}
 
@@ -3303,14 +3309,13 @@ function CRMBoard({ toast }) {
         </span>
       </div>
       <div className="page-sub">
-        Free-text job types · Staff IDs · Estimated time notifications · Visible
-        to 3 Admins only
+        Free-text job types · Staff IDs · Visible to Admins only
       </div>
       <div className="tabs">
         {[
           ["jobs", "Job Board", allJobs.length],
-          ["clients", "Clients", 0],
-          ["staff", "Staff & Workload", [].length],
+          ["clients", "Clients", clients.length],
+          ["staff", "Staff & Workload", allUsers.length],
         ].map(([k, l, n]) => (
           <button
             key={k}
@@ -3341,13 +3346,13 @@ function CRMBoard({ toast }) {
               style={{ maxWidth: 200 }}
             />
             <button className="btn btn-p" onClick={() => setShowAdd(true)}>
-              "+ New job"
+              + New job
             </button>
           </div>
           <div className="kanban-scroll">
             <div className="kanban">
               {STAGES.map((stage) => {
-                const list = fList(jobs[stage] || []);
+                const list = fList(board[stage] || []);
                 return (
                   <div
                     key={stage}
@@ -3365,9 +3370,7 @@ function CRMBoard({ toast }) {
                       if (dragItem && dragItem.fromStage !== stage) {
                         advance(dragItem.job.id, stage);
                         toast(
-                          `${dragItem.job.service} → ${stageLabel(
-                            stage
-                          )} ✓`,
+                          `${dragItem.job.service_type} → ${stageLabel(stage)} ✓`,
                           "success"
                         );
                       }
@@ -3388,14 +3391,12 @@ function CRMBoard({ toast }) {
                             dragItem?.job?.id === job.id ? " dragging" : ""
                           }`}
                           draggable
-                          onDragStart={() =>
-                            setDragItem({ job, fromStage: stage })
-                          }
+                          onDragStart={() => setDragItem({ job, fromStage: stage })}
                           onDragEnd={() => setDragItem(null)}
-                          onClick={() => setSelJob({ ...job, stage })}
+                          onClick={() => setSelJob(job)}
                         >
-                          <div className="kbc-t">{job.service}</div>
-                          <div className="kbc-c">👤 {job.client}</div>
+                          <div className="kbc-t">{job.service_type}</div>
+                          <div className="kbc-c">👤 {job.client?.full_name || "—"}</div>
                           <div
                             style={{
                               fontSize: 10,
@@ -3407,14 +3408,9 @@ function CRMBoard({ toast }) {
                           </div>
                           <div className="kbc-m">
                             <span className="badge b-gr">${job.price}</span>
-                            {job.estHours && (
-                              <span className="badge b-a">
-                                ⏱{job.estHours}h
-                              </span>
-                            )}
-                            {job.assignees?.length ? (
+                            {(job.assignments || []).length ? (
                               <span className="badge b-g">
-                                {job.assignees.length} staff
+                                {job.assignments.length} staff
                               </span>
                             ) : (
                               <span className="badge b-r">Unassigned</span>
@@ -3456,22 +3452,18 @@ function CRMBoard({ toast }) {
                 </tr>
               </thead>
               <tbody>
-                {allJobs
-                  .filter(
-                    (j, i, a) => a.findIndex((x) => x.client === j.client) === i
-                  )
-                  .map((j, i) => (
-                    <tr key={i} onClick={() => toast("Client: " + j.client)}>
-                      <td className="nm">{j.client}</td>
-                      <td>{j.phone}</td>
-                      <td style={{ fontSize: 11 }}>{j.address}</td>
-                      <td>
-                        <span className="badge b-p">
-                          {allJobs.filter((x) => x.client === j.client).length}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                {clients.map((c) => (
+                  <tr key={c.id} onClick={() => toast("Client: " + c.full_name)}>
+                    <td className="nm">{c.full_name}</td>
+                    <td>{c.phone}</td>
+                    <td style={{ fontSize: 11 }}>{c.address}</td>
+                    <td>
+                      <span className="badge b-p">
+                        {allJobs.filter((j) => j.client_id === c.id).length}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -3480,105 +3472,75 @@ function CRMBoard({ toast }) {
 
       {tab === "staff" && (
         <div className="g3">
-          {[].map((s) => (
-            <div
-              key={s.id}
-              className="card card-hover"
-              onClick={() =>
-                toast(s.name + " · " + s.uid + " — " + s.jobs + " active jobs")
-              }
-            >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 9,
-                  marginBottom: 11,
-                }}
-              >
-                <div className="av av-md">
-                  {s.name
-                    .split(" ")
-                    .map((n) => n[0])
-                    .join("")}
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div
-                    style={{ fontSize: 13, fontWeight: 700, color: T.white }}
-                  >
-                    {s.name}
+          {allUsers.map((u) => {
+            const activeCount = staffJobCounts[u.id] || 0;
+            return (
+              <div key={u.id} className="card card-hover">
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 9,
+                    marginBottom: 11,
+                  }}
+                >
+                  <div className="av av-md">
+                    {(u.full_name || "?")
+                      .split(" ")
+                      .map((n) => n[0])
+                      .join("")}
                   </div>
-                  <IdBadge uid={s.uid} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: T.white }}>
+                      {u.full_name}
+                    </div>
+                    <IdBadge uid={u.display_id} />
+                  </div>
+                  {u.office && <OfficePill o={u.office} />}
                 </div>
-                <OfficePill o={s.office} />
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  marginBottom: 9,
-                }}
-              >
-                <div style={{ textAlign: "center" }}>
+                <div style={{ textAlign: "center", marginBottom: 9 }}>
                   <div
                     style={{
                       fontSize: 19,
                       fontWeight: 700,
-                      color: s.jobs >= 3 ? T.amber : T.white,
+                      color: activeCount >= 3 ? T.amber : T.white,
                     }}
                   >
-                    {s.jobs}
+                    {activeCount}
                   </div>
                   <div style={{ fontSize: 9, color: T.muted }}>Active jobs</div>
                 </div>
-                <div style={{ textAlign: "center" }}>
-                  <div
-                    style={{ fontSize: 19, fontWeight: 700, color: T.white }}
-                  >
-                    {s.hours}h
-                  </div>
-                  <div style={{ fontSize: 9, color: T.muted }}>This week</div>
-                </div>
-                <div style={{ textAlign: "center" }}>
-                  <div
-                    style={{ fontSize: 19, fontWeight: 700, color: T.green }}
-                  >
-                    ${s.rate}
-                  </div>
-                  <div style={{ fontSize: 9, color: T.muted }}>Per hour</div>
-                </div>
-              </div>
-              <div
-                style={{
-                  height: 3,
-                  background: "rgba(255,255,255,.07)",
-                  borderRadius: 2,
-                  overflow: "hidden",
-                }}
-              >
                 <div
                   style={{
-                    height: "100%",
-                    width: Math.min(s.jobs / 5, 1) * 100 + "%",
-                    background:
-                      s.jobs >= 4 ? T.red : s.jobs >= 2 ? T.amber : T.green,
+                    height: 3,
+                    background: "rgba(255,255,255,.07)",
                     borderRadius: 2,
-                    transition: "width .3s",
+                    overflow: "hidden",
                   }}
-                />
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: Math.min(activeCount / 5, 1) * 100 + "%",
+                      background:
+                        activeCount >= 4 ? T.red : activeCount >= 2 ? T.amber : T.green,
+                      borderRadius: 2,
+                      transition: "width .3s",
+                    }}
+                  />
+                </div>
+                <div style={{ fontSize: 9, color: T.muted, marginTop: 5 }}>
+                  ★ Multiple concurrent job assignments supported
+                </div>
               </div>
-              <div style={{ fontSize: 9, color: T.muted, marginTop: 5 }}>
-                ★ Multiple concurrent job assignments supported
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
   );
 }
 
-// ── Tasks ─────────────────────────────────────────────────────────────────────
 function Tasks({ toast, user, pendingTaskId, clearPendingTask }) {
   const [tasks, setTasks] = useState([]);
   const [assignableUsers, setAssignableUsers] = useState([]);
