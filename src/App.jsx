@@ -5956,42 +5956,66 @@ function StaffMyJobs({ toast, user }) {
   const [completeModal, setCompleteModal] = useState(null);
   const [actualHours, setActualHours] = useState("");
   const [completeNote, setCompleteNote] = useState("");
-  const timer = useTimer(jobs.some((j) => j.checkedIn));
+  const timer = useTimer(jobs.some((j) => j.arrived_at && j.stage === "arrived_at_site"));
 
-  const toggleCheckIn = (id) => {
-    setJobs((p) =>
-      p.map((j) =>
-        j.id === id
-          ? {
-              ...j,
-              checkedIn: !j.checkedIn,
-              checkInTime: !j.checkedIn
-                ? new Date().toLocaleTimeString("en-US", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })
-                : null,
-            }
-          : j
-      )
-    );
-    const job = jobs.find((j) => j.id === id);
-    toast(job?.checkedIn ? "Checked out ✓" : "Checked in ✓", "success");
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token;
   };
 
-  const markComplete = () => {
+  const loadJobs = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/my-jobs`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setJobs(json.data || []);
+    } catch (e) {
+      toast("Failed to load your jobs", "error");
+    }
+  };
+
+  useEffect(() => {
+    loadJobs();
+  }, []);
+
+  const checkIn = async (id) => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/my-jobs/${id}/checkin`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error();
+      toast("Checked in ✓", "success");
+      loadJobs();
+    } catch (e) {
+      toast("Failed to check in", "error");
+    }
+  };
+
+  const markComplete = async () => {
     if (!actualHours) {
       toast("Enter actual hours worked", "warn");
       return;
     }
-    setJobs((p) => p.filter((j) => j.id !== completeModal.id));
-    setCompleteModal(null);
-    setActualHours("");
-    setCompleteNote("");
-    toast(
-      "Job marked complete · " + actualHours + "h logged · Assigner notified ✓",
-      "success"
-    );
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/my-jobs/${completeModal.id}/complete`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ actual_hours: parseFloat(actualHours) || 0, note: completeNote }),
+      });
+      if (!res.ok) throw new Error();
+      setCompleteModal(null);
+      setActualHours("");
+      setCompleteNote("");
+      toast("Job marked complete · " + actualHours + "h logged · Admins notified ✓", "success");
+      loadJobs();
+    } catch (e) {
+      toast("Failed to mark job complete", "error");
+    }
   };
 
   return (
@@ -5999,7 +6023,7 @@ function StaffMyJobs({ toast, user }) {
       {completeModal && (
         <Modal
           title="Mark job complete"
-          sub={completeModal.service + " — " + completeModal.address}
+          sub={completeModal.service_type + " — " + completeModal.address}
           onClose={() => {
             setCompleteModal(null);
             setActualHours("");
@@ -6014,8 +6038,7 @@ function StaffMyJobs({ toast, user }) {
               lineHeight: 1.6,
             }}
           >
-            Completing this job will log your actual hours and notify your
-            assigner. The job moves to Completed stage.
+            Completing this job will log your actual hours and notify the admins. The job moves to Completed stage.
           </div>
           <div className="ff">
             <label className="fl">Actual hours worked</label>
@@ -6025,7 +6048,7 @@ function StaffMyJobs({ toast, user }) {
               step="0.5"
               value={actualHours}
               onChange={(e) => setActualHours(e.target.value)}
-              placeholder={`Estimated was ${completeModal.estHours}h`}
+              placeholder="e.g. 3"
             />
           </div>
           <div className="ff">
@@ -6073,104 +6096,106 @@ function StaffMyJobs({ toast, user }) {
         </div>
       )}
 
-      {jobs.map((job) => (
-        <div
-          key={job.id}
-          className={`my-job-card${job.checkedIn ? " active-job" : ""}`}
-        >
+      {jobs.map((job) => {
+        const checkedIn = job.stage === "arrived_at_site";
+        return (
           <div
-            style={{
-              display: "flex",
-              alignItems: "flex-start",
-              justifyContent: "space-between",
-              gap: 12,
-              marginBottom: 8,
-            }}
+            key={job.id}
+            className={`my-job-card${checkedIn ? " active-job" : ""}`}
           >
-            <div>
-              <div
-                style={{
-                  fontSize: 16,
-                  fontWeight: 700,
-                  color: T.white,
-                  marginBottom: 3,
-                }}
-              >
-                {job.service}
-              </div>
-              <div style={{ fontSize: 12, color: T.muted, marginBottom: 6 }}>
-                📍 {job.address}
-              </div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <span className={`badge ${stageColor(job.stage)}`}>
-                  {stageLabel(job.stage)}
-                </span>
-                <span className="badge b-gr">${job.price}</span>
-                <span className="badge b-a">⏱ {job.estHours}h est.</span>
-              </div>
-            </div>
-            {job.checkedIn && (
-              <div style={{ textAlign: "center", flexShrink: 0 }}>
-                <div style={{ fontSize: 10, color: T.muted, marginBottom: 3 }}>
-                  Time on site
-                </div>
-                <div className="timer-display">{timer}</div>
-                <div style={{ fontSize: 10, color: T.muted }}>
-                  Checked in {job.checkInTime}
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div style={{ fontSize: 12, color: T.sub, marginBottom: 3 }}>
-            <b style={{ color: T.text }}>Client:</b> {job.client} · {job.phone}
-          </div>
-          <div style={{ fontSize: 12, color: T.sub, marginBottom: 8 }}>
-            <b style={{ color: T.text }}>Scheduled:</b> {job.scheduled}
-          </div>
-
-          {job.tools.length > 0 && (
             <div
               style={{
                 display: "flex",
-                gap: 4,
-                flexWrap: "wrap",
-                marginBottom: 10,
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 12,
+                marginBottom: 8,
               }}
             >
-              {job.tools.map((t, i) => (
-                <span key={i} className="badge b-gr">
-                  {t}
-                </span>
-              ))}
+              <div>
+                <div
+                  style={{
+                    fontSize: 16,
+                    fontWeight: 700,
+                    color: T.white,
+                    marginBottom: 3,
+                  }}
+                >
+                  {job.service_type}
+                </div>
+                <div style={{ fontSize: 12, color: T.muted, marginBottom: 6 }}>
+                  📍 {job.address}
+                </div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <span className={`badge ${stageColor(job.stage)}`}>
+                    {stageLabel(job.stage)}
+                  </span>
+                  <span className="badge b-gr">${job.price}</span>
+                </div>
+              </div>
+              {checkedIn && (
+                <div style={{ textAlign: "center", flexShrink: 0 }}>
+                  <div style={{ fontSize: 10, color: T.muted, marginBottom: 3 }}>
+                    Time on site
+                  </div>
+                  <div className="timer-display">{timer}</div>
+                  <div style={{ fontSize: 10, color: T.muted }}>
+                    Arrived {job.arrived_at ? new Date(job.arrived_at).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }) : ""}
+                  </div>
+                </div>
+              )}
             </div>
-          )}
 
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              className={`checkin-btn${job.checkedIn ? " ci-out" : " ci-in"}`}
-              style={{ flex: 1 }}
-              onClick={() => toggleCheckIn(job.id)}
-            >
-              {job.checkedIn ? "✓ Check out" : "📍 Check in — I've arrived"}
-            </button>
-            {job.checkedIn && (
-              <button
-                className="btn btn-g"
-                style={{ flexShrink: 0, padding: "11px 16px" }}
-                onClick={() => setCompleteModal(job)}
+            <div style={{ fontSize: 12, color: T.sub, marginBottom: 3 }}>
+              <b style={{ color: T.text }}>Client:</b> {job.client?.full_name || "—"} · {job.client?.phone || "—"}
+            </div>
+            <div style={{ fontSize: 12, color: T.sub, marginBottom: 8 }}>
+              <b style={{ color: T.text }}>Scheduled:</b> {job.scheduled_at ? new Date(job.scheduled_at).toLocaleString() : "—"}
+            </div>
+
+            {job.tools_used?.length > 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  gap: 4,
+                  flexWrap: "wrap",
+                  marginBottom: 10,
+                }}
               >
-                Mark complete ✓
-              </button>
+                {job.tools_used.map((t, i) => (
+                  <span key={i} className="badge b-gr">
+                    {t}
+                  </span>
+                ))}
+              </div>
             )}
+
+            <div style={{ display: "flex", gap: 8 }}>
+              {!checkedIn ? (
+                <button
+                  className="checkin-btn ci-in"
+                  style={{ flex: 1 }}
+                  onClick={() => checkIn(job.id)}
+                >
+                  📍 Check in — I've arrived
+                </button>
+              ) : (
+                <button
+                  className="btn btn-g"
+                  style={{ flex: 1, padding: "11px 16px" }}
+                  onClick={() => setCompleteModal(job)}
+                >
+                  Mark complete ✓
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
-// ── Staff: My Tasks ───────────────────────────────────────────────────────────
 function StaffMyTasks({ toast }) {
   const [tasks, setTasks] = useState([]);
   const [doneModal, setDoneModal] = useState(null);
