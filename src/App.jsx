@@ -1377,20 +1377,14 @@ const BOARD_NAV = [
     icon: "🎓",
     section: "Programs",
   },
+  // Operations
+  { key: "tasks", label: "Tasks & Roles", icon: "✅", section: "Operations" },
   {
     key: "crm",
     label: "Job Funnel",
     icon: "📋",
-    section: "Programs",
-    adminOnly: true,
-  },
-  // Operations
-  { key: "tasks", label: "Tasks & Roles", icon: "✅", section: "Operations" },
-  {
-    key: "schedule",
-    label: "Shift Schedule",
-    icon: "📅",
     section: "Operations",
+    adminOnly: true,
   },
   {
     key: "finance",
@@ -1550,8 +1544,6 @@ function BoardShell({ user, onLogout, toast }) {
         return <Notifications {...p} />;
       case "esignatures":
         return <ESignatures {...p} />;
-      case "schedule":
-        return <ShiftSchedule {...p} />;
       case "mou":
         return <MOUTracker {...p} />;
       case "auditlog":
