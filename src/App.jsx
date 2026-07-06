@@ -3155,7 +3155,7 @@ function CRMBoard({ toast }) {
     loadUsers();
   }, []);
 
-  const allJobs = Object.values(board).flat();
+  const allJobs = Object.values(board).flat().filter(Boolean);
   const STAGES = [
     "job_scheduled",
     "staff_assigned",
