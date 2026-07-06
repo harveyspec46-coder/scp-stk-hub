@@ -3155,6 +3155,18 @@ function CRMBoard({ toast }) {
     loadUsers();
   }, []);
 
+  
+  // Real-time: refresh the board the moment a job or assignment changes
+  // anywhere (stage advance, new assignment, reschedule) — no manual refresh.
+  useEffect(() => {
+    const channel = supabase
+      .channel("crm-jobs-board")
+      .on("postgres_changes", { event: "*", schema: "public", table: "crm_jobs" }, () => loadJobs())
+      .on("postgres_changes", { event: "*", schema: "public", table: "crm_job_assignments" }, () => loadJobs())
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
   const allJobs = Object.values(board).flat().filter(Boolean);
   const STAGES = [
     "job_scheduled",
@@ -6307,6 +6319,18 @@ function StaffMyJobs({ toast, user }) {
   useEffect(() => {
     loadJobs();
   }, []);
+
+  
+  // Real-time: refresh My Jobs the moment an admin assigns/reschedules/advances
+  // a job — no manual refresh needed.
+  useEffect(() => {
+    const channel = supabase
+      .channel("my-jobs-" + (user?.id || "anon"))
+      .on("postgres_changes", { event: "*", schema: "public", table: "crm_jobs" }, () => loadJobs())
+      .on("postgres_changes", { event: "*", schema: "public", table: "crm_job_assignments" }, () => loadJobs())
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user?.id]);
 
   const checkIn = async (id) => {
     try {
