@@ -3506,7 +3506,7 @@ function CRMBoard({ toast }) {
                 marginBottom: 8,
               }}
             >
-              {allUsers.map((u) => {
+              {allUsers.filter((u) => u.role === "staff").map((u) => {
                 const assigned = (selJob.assignments || []).some((a) => a.user_id === u.id);
                 const activeCount = staffJobCounts[u.id] || 0;
                 return (
