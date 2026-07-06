@@ -2808,6 +2808,279 @@ function Participants({ toast }) {
   );
 }
 // ── CRM — Job Funnel (Board view) ────────────────────────────────────────────
+const HOUR_LABELS = ["8am","9am","10am","11am","12pm","1pm","2pm","3pm","4pm","5pm","6pm"];
+const HOUR_MAP = { "8am":8, "9am":9, "10am":10, "11am":11, "12pm":12, "1pm":13, "2pm":14, "3pm":15, "4pm":16, "5pm":17, "6pm":18 };
+
+function getMonday(d) {
+  const day = d.getDay();
+  const diff = (day === 0 ? -6 : 1) - day;
+  const monday = new Date(d);
+  monday.setDate(d.getDate() + diff);
+  monday.setHours(0, 0, 0, 0);
+  return monday;
+}
+
+function ShiftScheduleTab({ toast, allJobs, allUsers, loadJobs }) {
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [showAssign, setShowAssign] = useState(null); // { date, hourLabel }
+  const [assignJobId, setAssignJobId] = useState("");
+  const [assignStaffIds, setAssignStaffIds] = useState([]);
+  const [dragJobId, setDragJobId] = useState(null);
+  const [dragOverCell, setDragOverCell] = useState(null);
+
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token;
+  };
+
+  const weekStart = React.useMemo(() => {
+    const base = getMonday(new Date());
+    base.setDate(base.getDate() + weekOffset * 7);
+    return base;
+  }, [weekOffset]);
+
+  const days = React.useMemo(
+    () => Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(weekStart);
+      d.setDate(weekStart.getDate() + i);
+      return d;
+    }),
+    [weekStart]
+  );
+
+  const scheduledJobs = allJobs.filter((j) => j.scheduled_at);
+  const unscheduledJobs = allJobs.filter((j) => !j.scheduled_at);
+  const fieldStaff = allUsers.filter((u) => u.role === "staff");
+
+  const sameDay = (a, b) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+  const getJobsForCell = (date, hourLabel) => {
+    const targetHour = HOUR_MAP[hourLabel];
+    return scheduledJobs.filter((j) => {
+      const jd = new Date(j.scheduled_at);
+      return sameDay(jd, date) && jd.getHours() === targetHour;
+    });
+  };
+
+  const combineDateAndHour = (date, hourLabel) => {
+    const d = new Date(date);
+    d.setHours(HOUR_MAP[hourLabel], 0, 0, 0);
+    return d;
+  };
+
+  const toggleStaffSel = (uid) => {
+    setAssignStaffIds((p) => (p.includes(uid) ? p.filter((x) => x !== uid) : [...p, uid]));
+  };
+
+  const confirmAssign = async () => {
+    if (!assignJobId || assignStaffIds.length === 0) {
+      toast("Select a job and at least one staff member", "warn");
+      return;
+    }
+    try {
+      const token = await getToken();
+      const scheduledAtISO = combineDateAndHour(showAssign.date, showAssign.hourLabel).toISOString();
+      for (const uid of assignStaffIds) {
+        await fetch(`${import.meta.env.VITE_API_URL}/api/crm/jobs/${assignJobId}/assign`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: uid, role_on_job: "support", scheduled_at: scheduledAtISO }),
+        });
+      }
+      toast(`Scheduled ✓ ${assignStaffIds.length} staff notified`, "success");
+      setShowAssign(null);
+      setAssignJobId("");
+      setAssignStaffIds([]);
+      loadJobs();
+    } catch (e) {
+      toast("Failed to schedule job", "error");
+    }
+  };
+
+  const rescheduleJob = async (jobId, date, hourLabel) => {
+    try {
+      const token = await getToken();
+      const scheduledAtISO = combineDateAndHour(date, hourLabel).toISOString();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/crm/jobs/${jobId}/reschedule`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ scheduled_at: scheduledAtISO }),
+      });
+      if (!res.ok) throw new Error();
+      toast("Job rescheduled ✓", "success");
+      loadJobs();
+    } catch (e) {
+      toast("Failed to reschedule job", "error");
+    }
+  };
+
+  return (
+    <div>
+      {showAssign && (
+        <Modal
+          title={`Schedule — ${showAssign.date.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })} ${showAssign.hourLabel}`}
+          onClose={() => { setShowAssign(null); setAssignJobId(""); setAssignStaffIds([]); }}
+          footer={
+            <>
+              <button className="btn" onClick={() => { setShowAssign(null); setAssignJobId(""); setAssignStaffIds([]); }}>
+                Cancel
+              </button>
+              <button className="btn btn-p" onClick={confirmAssign}>
+                Schedule job
+              </button>
+            </>
+          }
+        >
+          <div className="ff">
+            <label className="fl">Job (unscheduled only)</label>
+            <select className="fsel" value={assignJobId} onChange={(e) => setAssignJobId(e.target.value)}>
+              <option value="">Select job…</option>
+              {unscheduledJobs.map((j) => (
+                <option key={j.id} value={j.id}>
+                  {j.service_type} — {j.client?.full_name || "client"} ({j.address.split(",")[0]})
+                </option>
+              ))}
+            </select>
+            {unscheduledJobs.length === 0 && (
+              <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>
+                No unscheduled jobs — create one in the Job Board tab first.
+              </div>
+            )}
+          </div>
+          <div className="ff">
+            <label className="fl">Assign staff (select one or more)</label>
+            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 4 }}>
+              {fieldStaff.map((u) => {
+                const checked = assignStaffIds.includes(u.id);
+                return (
+                  <button
+                    key={u.id}
+                    className={`btn btn-sm${checked ? " btn-p" : ""}`}
+                    onClick={() => toggleStaffSel(u.id)}
+                    style={{ display: "flex", alignItems: "center", gap: 5 }}
+                  >
+                    <span
+                      style={{
+                        width: 16, height: 16, borderRadius: 4,
+                        background: checked ? T.pink2 + "66" : "rgba(255,255,255,.08)",
+                        border: `1px solid ${checked ? T.pink : "var(--border2)"}`,
+                        display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 9,
+                      }}
+                    >
+                      {checked ? "✓" : ""}
+                    </span>
+                    {u.full_name}
+                  </button>
+                );
+              })}
+              {fieldStaff.length === 0 && (
+                <div style={{ fontSize: 11, color: T.muted }}>No staff accounts yet.</div>
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+        <div>
+          <div className="page-title">Shift & Schedule</div>
+          <div className="page-sub">
+            Click an empty slot to schedule a job · Drag a scheduled job to reschedule
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 7 }}>
+          <button className="btn" onClick={() => setWeekOffset((p) => p - 1)}>← Prev</button>
+          <button className="btn" onClick={() => setWeekOffset(0)}>This week</button>
+          <button className="btn" onClick={() => setWeekOffset((p) => p + 1)}>Next →</button>
+        </div>
+      </div>
+
+      {unscheduledJobs.length > 0 && (
+        <div className="info-box amber" style={{ marginBottom: 14 }}>
+          <span style={{ color: T.amber, fontWeight: 600 }}>{unscheduledJobs.length} job(s) need scheduling: </span>
+          {unscheduledJobs.map((j) => j.service_type).join(", ")}
+        </div>
+      )}
+
+      <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
+        <div style={{ minWidth: 680 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "60px repeat(7,1fr)", gap: 3, marginBottom: 3 }}>
+            <div />
+            {days.map((d) => (
+              <div
+                key={d.toISOString()}
+                style={{
+                  textAlign: "center", fontSize: 11, fontWeight: 700, color: T.sub,
+                  padding: "5px 0", background: "var(--cd)", borderRadius: "var(--r)",
+                }}
+              >
+                {d.toLocaleDateString("en-US", { weekday: "short" })} {d.getDate()}
+              </div>
+            ))}
+          </div>
+          {HOUR_LABELS.map((hourLabel) => (
+            <div key={hourLabel} style={{ display: "grid", gridTemplateColumns: "60px repeat(7,1fr)", gap: 3, marginBottom: 3 }}>
+              <div style={{ fontSize: 10, color: T.muted, textAlign: "right", paddingRight: 8, paddingTop: 8, flexShrink: 0 }}>
+                {hourLabel}
+              </div>
+              {days.map((day) => {
+                const cellJobs = getJobsForCell(day, hourLabel);
+                const cellKey = day.toISOString() + hourLabel;
+                return (
+                  <div
+                    key={cellKey}
+                    style={{
+                      minHeight: 44,
+                      background: dragOverCell === cellKey ? "rgba(242,7,133,.06)" : "var(--dk)",
+                      border: `1px solid ${dragOverCell === cellKey ? T.pink : "var(--border)"}`,
+                      borderRadius: 6, padding: 3, cursor: "pointer", transition: "all .13s", position: "relative",
+                    }}
+                    onClick={() => { if (cellJobs.length === 0) setShowAssign({ date: day, hourLabel }); }}
+                    onDragOver={(e) => { e.preventDefault(); setDragOverCell(cellKey); }}
+                    onDragLeave={() => setDragOverCell(null)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragOverCell(null);
+                      if (dragJobId) rescheduleJob(dragJobId, day, hourLabel);
+                      setDragJobId(null);
+                    }}
+                  >
+                    {cellJobs.map((job) => (
+                      <div
+                        key={job.id}
+                        draggable
+                        onDragStart={() => setDragJobId(job.id)}
+                        onDragEnd={() => setDragJobId(null)}
+                        style={{
+                          background: T.pink2 + "22", border: `1px solid ${T.pink2}44`, borderRadius: 4,
+                          padding: "2px 5px", marginBottom: 2, fontSize: 9, lineHeight: 1.4, cursor: "grab",
+                        }}
+                      >
+                        <div style={{ fontWeight: 700, color: T.pink2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {job.service_type}
+                        </div>
+                        <div style={{ color: T.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {(job.assignments || []).map((a) => a.user?.full_name || "?").join(", ") || "Unassigned"}
+                        </div>
+                      </div>
+                    ))}
+                    {!cellJobs.length && (
+                      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "var(--border2)", opacity: 0.5 }}>
+                        +
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CRMBoard({ toast }) {
   const [tab, setTab] = useState("jobs");
   const [board, setBoard] = useState({ job_scheduled: [], staff_assigned: [], arrived_at_site: [], completed: [], invoiced: [] });
@@ -3408,7 +3681,8 @@ function CRMBoard({ toast }) {
         {[
           ["jobs", "Job Board", allJobs.length],
           ["clients", "Clients", clients.length],
-          ["staff", "Staff & Workload", allUsers.length],
+          ["staff", "Staff & Workload", allUsers.filter((u) => u.role === "staff").length],
+          ["schedule", "Shift & Schedule", allJobs.filter((j) => j.scheduled_at).length],
         ].map(([k, l, n]) => (
           <button
             key={k}
@@ -3565,7 +3839,7 @@ function CRMBoard({ toast }) {
 
       {tab === "staff" && (
         <div className="g3">
-          {allUsers.map((u) => {
+          {allUsers.filter((u) => u.role === "staff").map((u) => {
             const activeCount = staffJobCounts[u.id] || 0;
             return (
               <div key={u.id} className="card card-hover">
@@ -3629,6 +3903,9 @@ function CRMBoard({ toast }) {
             );
           })}
         </div>
+      )}
+    {tab === "schedule" && (
+        <ShiftScheduleTab toast={toast} allJobs={allJobs} allUsers={allUsers} loadJobs={loadJobs} />
       )}
     </div>
   );
