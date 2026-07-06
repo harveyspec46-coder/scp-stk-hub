@@ -6065,7 +6065,6 @@ function UsersAndIDs({ toast, user }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 const STAFF_NAV = [
   { key: "myjobs", label: "My Jobs", icon: "🔧", section: "Work" },
-  { key: "mytasks", label: "My Tasks", icon: "✅", section: "Work" },
   { key: "myhours", label: "My Hours", icon: "🕐", section: "Payroll" },
   { key: "mypaystub", label: "My Pay Stub", icon: "💵", section: "Payroll" },
   {
@@ -6115,8 +6114,6 @@ function StaffShell({ user, onLogout, toast }) {
     switch (page) {
       case "myjobs":
         return <StaffMyJobs {...p} />;
-      case "mytasks":
-        return <StaffMyTasks {...p} />;
       case "myhours":
         return <StaffMyHours {...p} />;
       case "mypaystub":
@@ -6131,7 +6128,6 @@ function StaffShell({ user, onLogout, toast }) {
   // Bottom nav items for mobile (5 key actions)
   const bottomItems = [
     { key: "myjobs", icon: "🔧", label: "Jobs" },
-    { key: "mytasks", icon: "✅", label: "Tasks" },
     { key: "myhours", icon: "🕐", label: "Hours" },
     { key: "mypaystub", icon: "💵", label: "Pay" },
     {
@@ -6462,7 +6458,6 @@ function StaffMyJobs({ toast, user }) {
                   <span className={`badge ${stageColor(job.stage)}`}>
                     {stageLabel(job.stage)}
                   </span>
-                  <span className="badge b-gr">${job.price}</span>
                 </div>
               </div>
               {checkedIn && (
@@ -6849,7 +6844,7 @@ function StaffNotifs({ toast, notifs, markRead, markAllRead, onNav, onTaskClick 
             markRead(n.id);
             if (n.ref_id) {
               onTaskClick && onTaskClick(n.ref_id);
-              onNav && onNav("mytasks");
+              onNav && onNav("myjobs");
             }
           }}
         >
