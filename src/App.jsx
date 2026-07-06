@@ -2817,6 +2817,8 @@ function CRMBoard({ toast }) {
   const [search, setSearch] = useState("");
   const [svcF, setSvcF] = useState("");
   const [selJob, setSelJob] = useState(null);
+  const [editMode, setEditMode] = useState(false);
+  const [editForm, setEditForm] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
   const [dragItem, setDragItem] = useState(null);
   const [dragOver, setDragOver] = useState(null);
@@ -2963,6 +2965,43 @@ function CRMBoard({ toast }) {
     }
   };
 
+  const startEdit = (job) => {
+    setEditForm({
+      service_type: job.service_type,
+      address: job.address,
+      description: job.description || "",
+      tools_used: job.tools_used || [],
+      price: job.price,
+    });
+    setEditMode(true);
+  };
+
+  const saveJobEdit = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/crm/jobs/${selJob.id}`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          service_type: editForm.service_type,
+          address: editForm.address,
+          description: editForm.description,
+          tools_used: editForm.tools_used,
+          price: parseFloat(editForm.price) || 0,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      const updated = (await res.json()).data;
+      toast("Job updated ✓", "success");
+      setEditMode(false);
+      setEditForm(null);
+      await loadJobs();
+      setSelJob((prev) => (prev ? { ...prev, ...updated } : prev));
+    } catch (e) {
+      toast("Failed to update job", "error");
+    }
+  };
+
   const toggleAssign = async (job, u) => {
     const alreadyAssigned = (job.assignments || []).some((a) => a.user_id === u.id);
     try {
@@ -3021,29 +3060,89 @@ function CRMBoard({ toast }) {
     <div>
       {selJob && (
         <Modal
-          title={selJob.service_type}
+          title={editMode ? "Edit job" : selJob.service_type}
           sub={(selJob.client?.full_name || "Client") + " · " + selJob.address}
-          onClose={() => setSelJob(null)}
+          onClose={() => { setSelJob(null); setEditMode(false); setEditForm(null); }}
           footer={
-            <>
-              <button className="btn" onClick={() => setSelJob(null)}>
-                Close
-              </button>
-              {STAGES[STAGES.indexOf(selJob.stage) + 1] && (
-                <button
-                  className="btn btn-p"
-                  onClick={() => {
-                    advance(selJob.id, STAGES[STAGES.indexOf(selJob.stage) + 1]);
-                    toast("Stage advanced ✓", "success");
-                  }}
-                >
-                  Advance →{" "}
-                  {stageLabel(STAGES[STAGES.indexOf(selJob?.stage) + 1] || "")}
+            editMode ? (
+              <>
+                <button className="btn" onClick={() => { setEditMode(false); setEditForm(null); }}>
+                  Cancel
                 </button>
-              )}
-            </>
+                <button className="btn btn-p" onClick={saveJobEdit}>
+                  Save changes
+                </button>
+              </>
+            ) : (
+              <>
+                <button className="btn" onClick={() => setSelJob(null)}>
+                  Close
+                </button>
+                <button className="btn" onClick={() => startEdit(selJob)}>
+                  Edit
+                </button>
+                {STAGES[STAGES.indexOf(selJob.stage) + 1] && (
+                  <button
+                    className="btn btn-p"
+                    onClick={() => {
+                      advance(selJob.id, STAGES[STAGES.indexOf(selJob.stage) + 1]);
+                      toast("Stage advanced ✓", "success");
+                    }}
+                  >
+                    Advance →{" "}
+                    {stageLabel(STAGES[STAGES.indexOf(selJob?.stage) + 1] || "")}
+                  </button>
+                )}
+              </>
+            )
           }
         >
+          {editMode && editForm ? (
+            <>
+              <div className="ff">
+                <label className="fl">Job type</label>
+                <input
+                  className="fi2"
+                  value={editForm.service_type}
+                  onChange={(e) => setEditForm((f) => ({ ...f, service_type: e.target.value }))}
+                />
+              </div>
+              <div className="ff">
+                <label className="fl">Job site address</label>
+                <input
+                  className="fi2"
+                  value={editForm.address}
+                  onChange={(e) => setEditForm((f) => ({ ...f, address: e.target.value }))}
+                />
+              </div>
+              <div className="ff">
+                <label className="fl">Quoted price ($)</label>
+                <input
+                  className="fi2"
+                  type="number"
+                  value={editForm.price}
+                  onChange={(e) => setEditForm((f) => ({ ...f, price: e.target.value }))}
+                />
+              </div>
+              <div className="ff">
+                <label className="fl">Tools / equipment</label>
+                <TagInput
+                  value={editForm.tools_used}
+                  onChange={(v) => setEditForm((f) => ({ ...f, tools_used: v }))}
+                  placeholder="Type a tool, press Enter…"
+                />
+              </div>
+              <div className="ff">
+                <label className="fl">Job description</label>
+                <textarea
+                  className="ftxt"
+                  value={editForm.description}
+                  onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
+                />
+              </div>
+            </>
+          ) : (
+          <>
           <div
             style={{
               display: "grid",
@@ -3185,6 +3284,8 @@ function CRMBoard({ toast }) {
               ⚠ orange = already at 3+ active jobs · Click to toggle assignment
             </div>
           </div>
+        </>
+          )}
         </Modal>
       )}
 
