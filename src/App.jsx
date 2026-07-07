@@ -3103,6 +3103,7 @@ function CRMBoard({ toast }) {
     desc: "",
     tools: [],
     price: "",
+    estHours: "",
     scheduled: "",
   });
   const setA = (k) => (v) => setAF((f) => ({ ...f, [k]: v }));
@@ -3234,6 +3235,7 @@ function CRMBoard({ toast }) {
           tools_used: af.tools,
           scheduled_at: af.scheduled ? new Date(af.scheduled).toISOString() : null,
           price: parseFloat(af.price) || 0,
+          estimated_hours: parseFloat(af.estHours) || 0,
           notes: "",
         }),
       });
@@ -3241,7 +3243,7 @@ function CRMBoard({ toast }) {
 
       if (af.service && !sugg.includes(af.service)) setSugg((p) => [af.service, ...p]);
       setShowAdd(false);
-      setAF({ client: "", phone: "", address: "", service: "", desc: "", tools: [], price: "", scheduled: "" });
+      setAF({ client: "", phone: "", address: "", service: "", desc: "", tools: [], price: "", estHours: "", scheduled: "" });
       toast("Job created ✓", "success");
       loadJobs();
       loadClients();
@@ -3632,15 +3634,33 @@ function CRMBoard({ toast }) {
               suggestions={sugg}
             />
           </div>
-          <div className="ff">
-            <label className="fl">Quoted price ($)</label>
-            <input
-              className="fi2"
-              type="number"
-              value={af.price}
-              onChange={setAe("price")}
-              placeholder="150.00"
-            />
+          <div className="frow2">
+            <div className="ff">
+              <label className="fl">Quoted price ($)</label>
+              <input
+                className="fi2"
+                type="number"
+                value={af.price}
+                onChange={setAe("price")}
+                placeholder="150.00"
+              />
+            </div>
+            <div className="ff">
+              <label className="fl">
+                Estimated hours{" "}
+                <span style={{ color: T.amber, fontWeight: 400 }}>
+                  — used for staff payroll
+                </span>
+              </label>
+              <input
+                className="fi2"
+                type="number"
+                step="0.5"
+                value={af.estHours}
+                onChange={setAe("estHours")}
+                placeholder="e.g. 3"
+              />
+            </div>
           </div>
           <div className="ff">
             <label className="fl">Tools / equipment</label>
