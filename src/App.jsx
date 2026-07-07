@@ -6916,15 +6916,65 @@ function StaffMyHours({ toast }) {
 
 // ── Staff: Pay Stub ───────────────────────────────────────────────────────────
 function StaffPayStub({ toast, user }) {
-  const hours = 25;
-  const rate = 22.5;
-  const gross = hours * rate;
-  const net = gross;
+  const [p, setP] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const { label: periodLabel } = currentPayPeriod();
+
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token;
+  };
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/payroll`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setP(json.data || null);
+    } catch (e) {
+      toast("Failed to load your pay stub", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  // Live-update if an admin logs a payment or adjusts pay while this is open
+  useEffect(() => {
+    if (!user?.id) return;
+    const channel = supabase
+      .channel("my-payroll-" + user.id)
+      .on("postgres_changes", { event: "*", schema: "public", table: "payroll_adjustments" }, () => load())
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user?.id]);
+
+  if (loading) {
+    return (
+      <div>
+        <div className="page-title">My Pay Stub</div>
+        <div className="page-sub">Loading…</div>
+      </div>
+    );
+  }
+
+  const hours = p?.total_hours || 0;
+  const rate = p?.hourly_rate || 0;
+  const gross = p?.gross_pay || 0;
+  const adjustment = p?.adjustment || 0;
+  const net = p?.net_pay || 0;
+
   return (
     <div>
       <div className="page-title">My Pay Stub</div>
       <div className="page-sub">
-        Current period · Read-only — contact Admin for adjustments
+        {periodLabel} · Read-only — contact Admin for adjustments
       </div>
       <div className="card" style={{ maxWidth: 480 }}>
         <div
@@ -6949,21 +6999,22 @@ function StaffPayStub({ toast, user }) {
               Pay Stub
             </div>
             <div style={{ fontSize: 12, color: T.muted }}>
-              Period: April 2026
+              Period: {periodLabel}
             </div>
           </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 12, color: T.text, fontWeight: 600 }}>
-              {user?.name || "Staff Member"}
+              {user?.full_name || "Staff Member"}
             </div>
-            <IdBadge uid={user?.uid || "STF-001"} />
+            <IdBadge uid={user?.display_id} />
           </div>
         </div>
         {[
-          ["Hours worked", hours + "h"],
+          ["Jobs this period", p?.job_count || 0],
+          ["Hours worked", hours.toFixed(1) + "h"],
           ["Hourly rate", "$" + rate.toFixed(2) + "/hr"],
           ["Gross pay", "$" + gross.toFixed(2)],
-          ["Adjustments", "$0.00"],
+          ["Adjustments", (adjustment >= 0 ? "+" : "") + "$" + adjustment.toFixed(2)],
         ].map(([k, v], i) => (
           <div
             key={i}
@@ -6995,10 +7046,21 @@ function StaffPayStub({ toast, user }) {
             ${net.toFixed(2)}
           </span>
         </div>
+        {p?.paid ? (
+          <div className="info-box" style={{ marginTop: 8 }}>
+            <span style={{ color: T.green, fontWeight: 600 }}>✓ Paid: </span>
+            ${(p.paid_amount || 0).toFixed(2)}
+            {p.paid_at ? " on " + new Date(p.paid_at).toLocaleDateString() : ""}
+          </div>
+        ) : (
+          <div className="info-box amber" style={{ marginTop: 8 }}>
+            Payment not yet logged by admin for this period.
+          </div>
+        )}
         <button
           className="btn btn-p"
           style={{ width: "100%", marginTop: 8 }}
-          onClick={() => toast("Pay stub downloaded as PDF ✓", "success")}
+          onClick={() => generatePayStub(p)}
         >
           📄 Download PDF
         </button>
@@ -7007,7 +7069,6 @@ function StaffPayStub({ toast, user }) {
   );
 }
 
-// ── Staff: Notifications ──────────────────────────────────────────────────────
 function StaffNotifs({ toast, notifs, markRead, markAllRead, onNav, onTaskClick }) {
   const unread = notifs.filter((n) => !n.read).length;
   return (
