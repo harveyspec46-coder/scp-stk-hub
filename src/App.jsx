@@ -4559,24 +4559,213 @@ function Tasks({ toast, user, pendingTaskId, clearPendingTask }) {
 }
 
 // ── Finance ───────────────────────────────────────────────────────────────────
+function currentPayPeriod() {
+  const now = new Date();
+  let start;
+  if (now.getDate() >= 29) {
+    start = new Date(now.getFullYear(), now.getMonth(), 29);
+  } else {
+    start = new Date(now.getFullYear(), now.getMonth() - 1, 29);
+  }
+  const end = new Date(start.getFullYear(), start.getMonth() + 1, 29);
+  const endInclusive = new Date(end.getTime() - 86400000);
+  const label =
+    start.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
+    " – " +
+    endInclusive.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return { start, end, label };
+}
+
+function generatePayStub(p) {
+  const { label } = currentPayPeriod();
+  const w = window.open("", "_blank");
+  if (!w) return;
+  w.document.write(`
+    <html>
+      <head>
+        <title>Pay Stub — ${p.user?.full_name || "Staff"}</title>
+        <style>
+          body { font-family: system-ui, sans-serif; padding: 40px; color: #111; }
+          h1 { font-size: 20px; margin-bottom: 4px; }
+          .sub { color: #666; margin-bottom: 24px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+          td { padding: 8px 0; border-bottom: 1px solid #eee; }
+          td:last-child { text-align: right; font-weight: 600; }
+          .net { font-size: 18px; font-weight: 700; border-top: 2px solid #111; }
+        </style>
+      </head>
+      <body>
+        <h1>SCP-STK Hub — Pay Stub</h1>
+        <div class="sub">${p.user?.full_name || "Staff"} (${p.user?.display_id || "—"}) · Pay period: ${label}</div>
+        <table>
+          <tr><td>Jobs completed</td><td>${p.job_count || 0}</td></tr>
+          <tr><td>Total hours</td><td>${(p.total_hours || 0).toFixed(1)}h</td></tr>
+          <tr><td>Hourly rate</td><td>$${(p.hourly_rate || 0).toFixed(2)}/h</td></tr>
+          <tr><td>Gross pay</td><td>$${(p.gross_pay || 0).toFixed(2)}</td></tr>
+          <tr><td>Adjustment</td><td>${(p.adjustment || 0) >= 0 ? "+" : ""}$${(p.adjustment || 0).toFixed(2)}</td></tr>
+          <tr class="net"><td>Net pay</td><td>$${(p.net_pay || 0).toFixed(2)}</td></tr>
+          ${p.paid ? `<tr><td>Paid</td><td>$${(p.paid_amount || 0).toFixed(2)} on ${p.paid_at ? new Date(p.paid_at).toLocaleDateString() : ""}</td></tr>` : ""}
+        </table>
+        <p style="margin-top:32px; color:#999; font-size:11px;">Generated ${new Date().toLocaleString()} · Use your browser's Print → Save as PDF to download.</p>
+        <script>window.print();</script>
+      </body>
+    </html>
+  `);
+  w.document.close();
+}
+
 function Finance({ toast }) {
   const [tab, setTab] = useState("overview");
-  const [adj, setAdj] = useState({});
-  const allJobs = [];
-  const invoiced = allJobs
-    .filter((j) => j.stage === "invoiced")
-    .reduce((a, j) => a + j.price, 0);
-  const pipeline = allJobs
-    .filter((j) => j.stage !== "invoiced")
-    .reduce((a, j) => a + j.price, 0);
-  const payroll = [].map((s) => {
-    const g = s.hours * s.rate;
-    return { ...s, gross: g, net: g + (adj[s.id] || 0) };
+  const [summary, setSummary] = useState(null);
+  const [payroll, setPayroll] = useState([]);
+  const [jobs, setJobs] = useState([]);
+  const [adjInputs, setAdjInputs] = useState({});
+  const [payModal, setPayModal] = useState(null);
+  const [payAmount, setPayAmount] = useState("");
+
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token;
+  };
+
+  const loadSummary = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/finance/summary`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setSummary(json.data || null);
+    } catch (e) {
+      toast("Failed to load finance summary", "error");
+    }
+  };
+
+  const loadPayroll = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/payroll/all`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setPayroll(json.data || []);
+    } catch (e) {
+      toast("Failed to load payroll", "error");
+    }
+  };
+
+  const loadJobs = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/crm/jobs`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setJobs(Object.values(json.data || {}).flat().filter(Boolean));
+    } catch (e) { /* silent */ }
+  };
+
+  useEffect(() => {
+    loadSummary();
+    loadPayroll();
+    loadJobs();
+  }, []);
+
+  const { start: periodStart, end: periodEnd, label: periodLabel } = currentPayPeriod();
+
+  const periodJobs = jobs.filter((j) => {
+    if (!j.scheduled_at) return false;
+    const d = new Date(j.scheduled_at);
+    return d >= periodStart && d < periodEnd;
   });
-  const totalPay = payroll.reduce((a, p) => a + p.net, 0);
+
+  const saveAdjustment = async (userId) => {
+    const value = parseFloat(adjInputs[userId]);
+    if (isNaN(value)) return;
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/payroll/${userId}/adjust`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ adjustment: value, reason: "" }),
+      });
+      if (!res.ok) throw new Error();
+      toast("Adjustment saved ✓", "success");
+      loadPayroll();
+      loadSummary();
+    } catch (e) {
+      toast("Failed to save adjustment", "error");
+    }
+  };
+
+  const confirmLogPayment = async () => {
+    if (!payModal) return;
+    const amount = parseFloat(payAmount);
+    if (isNaN(amount) || amount < 0) {
+      toast("Enter a valid amount", "warn");
+      return;
+    }
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/payroll/${payModal.user_id}/log-payment`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ amount }),
+      });
+      if (!res.ok) throw new Error();
+      toast("Payment logged ✓", "success");
+      setPayModal(null);
+      setPayAmount("");
+      loadPayroll();
+      loadSummary();
+    } catch (e) {
+      toast("Failed to log payment", "error");
+    }
+  };
 
   return (
     <div>
+      {payModal && (
+        <Modal
+          title="Log payment"
+          sub={(payModal.user?.full_name || "Staff") + " · " + periodLabel}
+          onClose={() => { setPayModal(null); setPayAmount(""); }}
+          footer={
+            <>
+              <button className="btn" onClick={() => { setPayModal(null); setPayAmount(""); }}>
+                Cancel
+              </button>
+              <button className="btn btn-p" onClick={confirmLogPayment}>
+                Confirm payment
+              </button>
+            </>
+          }
+        >
+          <div
+            style={{
+              fontSize: 12,
+              color: T.sub,
+              marginBottom: 12,
+              lineHeight: 1.6,
+            }}
+          >
+            Only log this once the payment has actually been made (cash, transfer, etc). Calculated net pay is{" "}
+            <b style={{ color: T.text }}>${(payModal.net_pay || 0).toFixed(2)}</b>.
+          </div>
+          <div className="ff">
+            <label className="fl">Amount paid ($)</label>
+            <input
+              className="fi2"
+              type="number"
+              step="0.01"
+              value={payAmount}
+              onChange={(e) => setPayAmount(e.target.value)}
+              placeholder={(payModal.net_pay || 0).toFixed(2)}
+            />
+          </div>
+        </Modal>
+      )}
+
       <div
         style={{
           display: "flex",
@@ -4593,31 +4782,30 @@ function Finance({ toast }) {
         </span>
       </div>
       <div className="page-sub">
-        Revenue · Payroll · Pay stubs · Hours-to-paycheck · Visible to 3 Admins
-        only
+        Pay period: {periodLabel} · Revenue · Payroll · Pay stubs
       </div>
       <div className="fin-grid">
         <div className="fin-card">
           <div className="fin-lbl">Invoiced revenue</div>
           <div className="fin-val" style={{ color: T.green }}>
-            ${invoiced.toLocaleString()}
+            ${(summary?.invoiced_revenue || 0).toLocaleString()}
           </div>
         </div>
         <div className="fin-card">
           <div className="fin-lbl">Pipeline value</div>
           <div className="fin-val" style={{ color: T.amber }}>
-            ${pipeline.toLocaleString()}
+            ${(summary?.pipeline_value || 0).toLocaleString()}
           </div>
         </div>
         <div className="fin-card">
           <div className="fin-lbl">Payroll due</div>
           <div className="fin-val" style={{ color: T.pink }}>
-            ${Math.round(totalPay).toLocaleString()}
+            ${Math.round(summary?.payroll_due || 0).toLocaleString()}
           </div>
         </div>
         <div className="fin-card">
           <div className="fin-lbl">Total jobs</div>
-          <div className="fin-val">{allJobs.length}</div>
+          <div className="fin-val">{summary?.total_jobs || 0}</div>
         </div>
       </div>
       <div className="tabs">
@@ -4646,16 +4834,15 @@ function Finance({ toast }) {
                   <th>Service</th>
                   <th>Amount</th>
                   <th>Stage</th>
-                  <th>Action</th>
                 </tr>
               </thead>
               <tbody>
-                {allJobs.map((j) => (
-                  <tr key={j.id} onClick={(e) => e.stopPropagation()}>
+                {periodJobs.map((j) => (
+                  <tr key={j.id}>
                     <td className="nm" style={{ fontSize: 11 }}>
                       {j.address.split(",")[0]}
                     </td>
-                    <td>{j.client}</td>
+                    <td>{j.client?.full_name || "—"}</td>
                     <td
                       style={{
                         fontSize: 11,
@@ -4665,7 +4852,7 @@ function Finance({ toast }) {
                         whiteSpace: "nowrap",
                       }}
                     >
-                      {j.service}
+                      {j.service_type}
                     </td>
                     <td
                       style={{
@@ -4673,30 +4860,22 @@ function Finance({ toast }) {
                         fontWeight: 700,
                       }}
                     >
-                      ${j.price.toFixed(2)}
+                      ${Number(j.price).toFixed(2)}
                     </td>
                     <td>
                       <span className={`badge ${stageColor(j.stage)}`}>
                         {stageLabel(j.stage)}
                       </span>
                     </td>
-                    <td>
-                      {j.stage === "completed" && (
-                        <button
-                          className="btn btn-xs btn-p"
-                          onClick={() =>
-                            toast(
-                              "Invoice sent to " + j.client + " ✓",
-                              "success"
-                            )
-                          }
-                        >
-                          Send invoice
-                        </button>
-                      )}
-                    </td>
                   </tr>
                 ))}
+                {!periodJobs.length && (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: "center", color: T.muted, padding: "20px 0" }}>
+                      No jobs scheduled this pay period yet
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -4719,48 +4898,57 @@ function Finance({ toast }) {
                 </tr>
               </thead>
               <tbody>
-                {payroll.map((s) => (
-                  <tr key={s.id} onClick={(e) => e.stopPropagation()}>
-                    <td className="nm">{s.name}</td>
+                {payroll.map((p) => (
+                  <tr key={p.user_id}>
+                    <td className="nm">{p.user?.full_name}</td>
                     <td>
-                      <IdBadge uid={s.uid} />
+                      <IdBadge uid={p.user?.display_id} />
                     </td>
-                    <td>{s.hours}h</td>
-                    <td style={{ color: T.muted }}>${s.rate}/h</td>
-                    <td style={{ fontWeight: 600 }}>${s.gross.toFixed(2)}</td>
+                    <td>{(p.total_hours || 0).toFixed(1)}h</td>
+                    <td style={{ color: T.muted }}>${(p.hourly_rate || 0).toFixed(2)}/h</td>
+                    <td style={{ fontWeight: 600 }}>${(p.gross_pay || 0).toFixed(2)}</td>
                     <td>
                       <input
                         type="number"
                         className="fi"
                         style={{ width: 76, padding: "3px 6px", fontSize: 11 }}
-                        value={adj[s.id] || ""}
+                        value={adjInputs[p.user_id] ?? (p.adjustment || 0)}
                         placeholder="0.00"
-                        onChange={(e) =>
-                          setAdj((p) => ({
-                            ...p,
-                            [s.id]: parseFloat(e.target.value) || 0,
-                          }))
-                        }
+                        onChange={(e) => setAdjInputs((prev) => ({ ...prev, [p.user_id]: e.target.value }))}
+                        onBlur={() => saveAdjustment(p.user_id)}
                       />
                     </td>
                     <td style={{ color: T.green, fontWeight: 700 }}>
-                      ${(s.gross + (adj[s.id] || 0)).toFixed(2)}
+                      ${(p.net_pay || 0).toFixed(2)}
+                      {p.paid && (
+                        <div style={{ fontSize: 9, color: T.muted, fontWeight: 400 }}>
+                          ✓ Paid ${((p.paid_amount || 0)).toFixed(2)}
+                        </div>
+                      )}
                     </td>
-                    <td>
+                    <td style={{ display: "flex", gap: 5 }}>
+                      <button
+                        className="btn btn-xs"
+                        onClick={() => { setPayModal(p); setPayAmount((p.net_pay || 0).toFixed(2)); }}
+                      >
+                        {p.paid ? "Re-log payment" : "Log payment"}
+                      </button>
                       <button
                         className="btn btn-xs btn-p"
-                        onClick={() =>
-                          toast(
-                            "Pay stub for " + s.name + " (" + s.uid + ") ✓",
-                            "success"
-                          )
-                        }
+                        onClick={() => generatePayStub(p)}
                       >
                         Pay stub
                       </button>
                     </td>
                   </tr>
                 ))}
+                {!payroll.length && (
+                  <tr>
+                    <td colSpan={8} style={{ textAlign: "center", color: T.muted, padding: "20px 0" }}>
+                      No staff accounts yet
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -4774,79 +4962,49 @@ function Finance({ toast }) {
                 <tr>
                   <th>Staff</th>
                   <th>ID</th>
-                  <th>Date</th>
-                  <th>Hours</th>
-                  <th>Job</th>
-                  <th>Service type</th>
+                  <th>Jobs this period</th>
+                  <th>Total hours</th>
+                  <th>Rate</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
-                {[
-                  {
-                    n: "Darnell W.",
-                    id: "STF-001",
-                    d: "Apr 11",
-                    h: 8,
-                    job: "j5",
-                    svc: "Apartment Move",
-                  },
-                  {
-                    n: "Sam T.",
-                    id: "STF-002",
-                    d: "Apr 11",
-                    h: 9,
-                    job: "j5",
-                    svc: "Apartment Move",
-                  },
-                  {
-                    n: "Aisha F.",
-                    id: "STF-003",
-                    d: "Apr 11",
-                    h: 7,
-                    job: "j3",
-                    svc: "Interior Painting",
-                  },
-                  {
-                    n: "Lee R.",
-                    id: "STF-004",
-                    d: "Apr 11",
-                    h: 8,
-                    job: "j4",
-                    svc: "Post-Construction Cleanup",
-                  },
-                  {
-                    n: "Darnell W.",
-                    id: "STF-001",
-                    d: "Apr 10",
-                    h: 5,
-                    job: "j6",
-                    svc: "Driveway Snow Removal",
-                  },
-                ].map((h, i) => (
-                  <tr
-                    key={i}
-                    onClick={() => toast(h.n + " — " + h.h + "h logged")}
-                  >
-                    <td className="nm">{h.n}</td>
+                {payroll.map((p) => (
+                  <tr key={p.user_id}>
+                    <td className="nm">{p.user?.full_name}</td>
                     <td>
-                      <IdBadge uid={h.id} />
+                      <IdBadge uid={p.user?.display_id} />
                     </td>
-                    <td style={{ fontSize: 11 }}>{h.d}</td>
                     <td>
-                      <span className="badge b-p">{h.h}h</span>
+                      <span className="badge b-p">{p.job_count || 0}</span>
                     </td>
-                    <td
-                      style={{
-                        fontSize: 10,
-                        color: T.muted,
-                        fontFamily: "monospace",
-                      }}
-                    >
-                      {h.job}
+                    <td>
+                      <span className="badge b-a">{(p.total_hours || 0).toFixed(1)}h</span>
                     </td>
-                    <td style={{ fontSize: 11 }}>{h.svc}</td>
+                    <td style={{ fontSize: 11 }}>${(p.hourly_rate || 0).toFixed(2)}/h</td>
+                    <td style={{ display: "flex", gap: 5 }}>
+                      <button
+                        className="btn btn-xs"
+                        onClick={() => { setPayModal(p); setPayAmount((p.net_pay || 0).toFixed(2)); }}
+                      >
+                        {p.paid ? "Re-log payment" : "Log payment"}
+                      </button>
+                      <button
+                        className="btn btn-xs btn-p"
+                        onClick={() => generatePayStub(p)}
+                      >
+                        Generate pay stub
+                      </button>
+                    </td>
                   </tr>
                 ))}
+                {!payroll.length && (
+                  <tr>
+                    <td colSpan={6} style={{ textAlign: "center", color: T.muted, padding: "20px 0" }}>
+                      No staff accounts yet
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -4856,7 +5014,6 @@ function Finance({ toast }) {
   );
 }
 
-// ── Grants ────────────────────────────────────────────────────────────────────
 function Grants({ toast, user }) {
   const [grantsList, setGrantsList] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
