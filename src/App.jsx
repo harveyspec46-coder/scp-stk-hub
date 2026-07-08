@@ -3105,6 +3105,7 @@ function CRMBoard({ toast }) {
     price: "",
     estHours: "",
     scheduled: "",
+    assignedTo: [],
   });
   const setA = (k) => (v) => setAF((f) => ({ ...f, [k]: v }));
   const setAe = (k) => (e) => setAF((f) => ({ ...f, [k]: e.target.value }));
@@ -3214,6 +3215,10 @@ function CRMBoard({ toast }) {
       toast("Client, address, and job type required", "warn");
       return;
     }
+    if (!af.assignedTo || af.assignedTo.length === 0) {
+      toast("Assign at least one staff member", "warn");
+      return;
+    }
     try {
       const token = await getToken();
       const clientRes = await fetch(`${import.meta.env.VITE_API_URL}/api/crm/clients`, {
@@ -3237,13 +3242,14 @@ function CRMBoard({ toast }) {
           price: parseFloat(af.price) || 0,
           estimated_hours: parseFloat(af.estHours) || 0,
           notes: "",
+          assigned_to: af.assignedTo,
         }),
       });
       if (!jobRes.ok) throw new Error("job");
 
       if (af.service && !sugg.includes(af.service)) setSugg((p) => [af.service, ...p]);
       setShowAdd(false);
-      setAF({ client: "", phone: "", address: "", service: "", desc: "", tools: [], price: "", estHours: "", scheduled: "" });
+      setAF({ client: "", phone: "", address: "", service: "", desc: "", tools: [], price: "", estHours: "", scheduled: "", assignedTo: [] });
       toast("Job created ✓", "success");
       loadJobs();
       loadClients();
@@ -3660,6 +3666,50 @@ function CRMBoard({ toast }) {
                 onChange={setAe("estHours")}
                 placeholder="e.g. 3"
               />
+            </div>
+          </div>
+          <div className="ff">
+            <label className="fl">
+              Assign staff{" "}
+              <span style={{ color: T.pink, fontWeight: 400 }}>
+                — select one or more, required
+              </span>
+            </label>
+            <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 4 }}>
+              {allUsers.filter((u) => u.role === "staff").map((u) => {
+                const checked = af.assignedTo.includes(u.id);
+                return (
+                  <button
+                    key={u.id}
+                    type="button"
+                    className={`btn btn-sm${checked ? " btn-p" : ""}`}
+                    style={{ display: "flex", alignItems: "center", gap: 5 }}
+                    onClick={() =>
+                      setAF((f) => ({
+                        ...f,
+                        assignedTo: checked
+                          ? f.assignedTo.filter((id) => id !== u.id)
+                          : [...f.assignedTo, u.id],
+                      }))
+                    }
+                  >
+                    <span
+                      style={{
+                        width: 16, height: 16, borderRadius: 4,
+                        background: checked ? T.pink2 + "66" : "rgba(255,255,255,.08)",
+                        border: `1px solid ${checked ? T.pink : "var(--border2)"}`,
+                        display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 9,
+                      }}
+                    >
+                      {checked ? "✓" : ""}
+                    </span>
+                    {u.full_name}
+                  </button>
+                );
+              })}
+              {allUsers.filter((u) => u.role === "staff").length === 0 && (
+                <div style={{ fontSize: 11, color: T.muted }}>No staff accounts yet.</div>
+              )}
             </div>
           </div>
           <div className="ff">
