@@ -4484,25 +4484,7 @@ function Tasks({ toast, user, pendingTaskId, clearPendingTask }) {
 }
 
 // ── Finance ───────────────────────────────────────────────────────────────────
-function currentPayPeriod() {
-  const now = new Date();
-  let start;
-  if (now.getDate() >= 29) {
-    start = new Date(now.getFullYear(), now.getMonth(), 29);
-  } else {
-    start = new Date(now.getFullYear(), now.getMonth() - 1, 29);
-  }
-  const end = new Date(start.getFullYear(), start.getMonth() + 1, 29);
-  const endInclusive = new Date(end.getTime() - 86400000);
-  const label =
-    start.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
-    " – " +
-    endInclusive.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  return { start, end, label };
-}
-
 function generatePayStub(p) {
-  const { label } = currentPayPeriod();
   const w = window.open("", "_blank");
   if (!w) return;
   w.document.write(`
@@ -4521,9 +4503,8 @@ function generatePayStub(p) {
       </head>
       <body>
         <h1>SCP-STK Hub — Pay Stub</h1>
-        <div class="sub">${p.user?.full_name || "Staff"} (${p.user?.display_id || "—"}) · Pay period: ${label}</div>
+        <div class="sub">${p.user?.full_name || "Staff"} (${p.user?.display_id || "—"}) · Pay period: ${p.period || ""}</div>
         <table>
-          <tr><td>Jobs completed</td><td>${p.job_count || 0}</td></tr>
           <tr><td>Total hours</td><td>${(p.total_hours || 0).toFixed(1)}h</td></tr>
           <tr><td>Hourly rate</td><td>$${(p.hourly_rate || 0).toFixed(2)}/h</td></tr>
           <tr><td>Gross pay</td><td>$${(p.gross_pay || 0).toFixed(2)}</td></tr>
@@ -4539,18 +4520,96 @@ function generatePayStub(p) {
   w.document.close();
 }
 
+function generateFinanceReport(summary, jobRevenue, ledger) {
+  const w = window.open("", "_blank");
+  if (!w) return;
+  const rows = (arr, cols) =>
+    arr.map((r) => `<tr>${cols.map((c) => `<td>${c(r)}</td>`).join("")}</tr>`).join("");
+  w.document.write(`
+    <html>
+      <head>
+        <title>Financial Report — ${summary?.period || ""}</title>
+        <style>
+          body { font-family: system-ui, sans-serif; padding: 40px; color: #111; }
+          h1 { font-size: 20px; margin-bottom: 4px; }
+          h2 { font-size: 15px; margin-top: 28px; }
+          .sub { color: #666; margin-bottom: 24px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+          th, td { padding: 6px 8px; border-bottom: 1px solid #eee; text-align: left; }
+          .cards { display: flex; gap: 16px; margin-top: 16px; }
+          .card { border: 1px solid #ddd; border-radius: 8px; padding: 12px 16px; flex: 1; }
+          .card .lbl { font-size: 10px; color: #888; text-transform: uppercase; }
+          .card .val { font-size: 20px; font-weight: 700; margin-top: 4px; }
+        </style>
+      </head>
+      <body>
+        <h1>SCP-STK Hub — Financial Report</h1>
+        <div class="sub">Period: ${summary?.period || ""} · Generated ${new Date().toLocaleString()}</div>
+        <div class="cards">
+          <div class="card"><div class="lbl">Invoiced Revenue</div><div class="val">$${(summary?.invoiced_revenue || 0).toFixed(2)}</div></div>
+          <div class="card"><div class="lbl">Pipeline Value</div><div class="val">$${(summary?.pipeline_value || 0).toFixed(2)}</div></div>
+          <div class="card"><div class="lbl">Other Revenue</div><div class="val">$${(summary?.other_revenue || 0).toFixed(2)}</div></div>
+          <div class="card"><div class="lbl">Other Expenses</div><div class="val">$${(summary?.other_expenses || 0).toFixed(2)}</div></div>
+          <div class="card"><div class="lbl">Payroll Due</div><div class="val">$${(summary?.payroll_due || 0).toFixed(2)}</div></div>
+        </div>
+        <h2>Job Revenue (${jobRevenue.length})</h2>
+        <table>
+          <tr><th>Service</th><th>Client</th><th>Stage</th><th>Amount</th></tr>
+          ${rows(jobRevenue, [
+            (r) => r.service_type,
+            (r) => r.client_name,
+            (r) => r.stage,
+            (r) => (r.payment_amount != null ? "$" + Number(r.payment_amount).toFixed(2) : "—"),
+          ])}
+        </table>
+        <h2>Other Revenue &amp; Expenses (${ledger.length})</h2>
+        <table>
+          <tr><th>Date</th><th>Type</th><th>Description</th><th>Amount</th></tr>
+          ${rows(ledger, [
+            (r) => new Date(r.entry_date).toLocaleDateString(),
+            (r) => r.entry_type,
+            (r) => r.description,
+            (r) => "$" + Number(r.amount).toFixed(2),
+          ])}
+        </table>
+        <p style="margin-top:32px; color:#999; font-size:11px;">Use your browser's Print → Save as PDF to download this report.</p>
+        <script>window.print();</script>
+      </body>
+    </html>
+  `);
+  w.document.close();
+}
+
 function Finance({ toast }) {
-  const [tab, setTab] = useState("overview");
+  const [topTab, setTopTab] = useState("workforce");
+  const [subTab, setSubTab] = useState("overview");
   const [summary, setSummary] = useState(null);
   const [payroll, setPayroll] = useState([]);
-  const [jobs, setJobs] = useState([]);
+  const [jobRevenue, setJobRevenue] = useState([]);
+  const [ledger, setLedger] = useState([]);
+  const [hoursInputs, setHoursInputs] = useState({});
   const [adjInputs, setAdjInputs] = useState({});
   const [payModal, setPayModal] = useState(null);
   const [payAmount, setPayAmount] = useState("");
+  const [jobPayModal, setJobPayModal] = useState(null);
+  const [jobPayAmount, setJobPayAmount] = useState("");
+  const [jobPayFile, setJobPayFile] = useState(null);
+  const [showLedgerAdd, setShowLedgerAdd] = useState(false);
+  const [lf, setLf] = useState({ entry_type: "revenue", description: "", amount: "", entry_date: new Date().toISOString().slice(0, 10), file: null });
 
   const getToken = async () => {
     const { data: { session } } = await supabase.auth.getSession();
     return session?.access_token;
+  };
+
+  const uploadReceipt = async (file) => {
+    if (!file) return "";
+    const { data: { session } } = await supabase.auth.getSession();
+    const path = `${session.user.id}/${Date.now()}_${file.name}`;
+    const { error } = await supabase.storage.from("Organization Document").upload(path, file);
+    if (error) throw error;
+    const { data: urlData } = supabase.storage.from("Organization Document").getPublicUrl(path);
+    return urlData.publicUrl;
   };
 
   const loadSummary = async () => {
@@ -4579,30 +4638,58 @@ function Finance({ toast }) {
     }
   };
 
-  const loadJobs = async () => {
+  const loadJobRevenue = async () => {
     try {
       const token = await getToken();
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/crm/jobs`, {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/finance/job-revenue`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const json = await res.json();
-      setJobs(Object.values(json.data || {}).flat().filter(Boolean));
-    } catch (e) { /* silent */ }
+      setJobRevenue(json.data || []);
+    } catch (e) {
+      toast("Failed to load job revenue", "error");
+    }
+  };
+
+  const loadLedger = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/finance/ledger`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setLedger(json.data || []);
+    } catch (e) {
+      toast("Failed to load ledger", "error");
+    }
   };
 
   useEffect(() => {
     loadSummary();
     loadPayroll();
-    loadJobs();
+    loadJobRevenue();
+    loadLedger();
   }, []);
 
-  const { start: periodStart, end: periodEnd, label: periodLabel } = currentPayPeriod();
-
-  const periodJobs = jobs.filter((j) => {
-    if (!j.scheduled_at) return false;
-    const d = new Date(j.scheduled_at);
-    return d >= periodStart && d < periodEnd;
-  });
+  const saveHours = async (userId) => {
+    const hours = parseFloat(hoursInputs[userId]?.hours);
+    const rate = parseFloat(hoursInputs[userId]?.rate);
+    if (isNaN(hours) || isNaN(rate)) return;
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/payroll/${userId}/hours`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ hours, rate }),
+      });
+      if (!res.ok) throw new Error();
+      toast("Hours saved ✓", "success");
+      loadPayroll();
+      loadSummary();
+    } catch (e) {
+      toast("Failed to save hours", "error");
+    }
+  };
 
   const saveAdjustment = async (userId) => {
     const value = parseFloat(adjInputs[userId]);
@@ -4648,12 +4735,85 @@ function Finance({ toast }) {
     }
   };
 
+  const confirmJobPayment = async () => {
+    if (!jobPayModal) return;
+    const amount = parseFloat(jobPayAmount);
+    if (isNaN(amount) || amount < 0) {
+      toast("Enter a valid amount", "warn");
+      return;
+    }
+    try {
+      const receiptUrl = await uploadReceipt(jobPayFile);
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/crm/jobs/${jobPayModal.job_id}/payment`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ amount, receipt_url: receiptUrl }),
+      });
+      if (!res.ok) throw new Error();
+      toast("Payment recorded ✓", "success");
+      setJobPayModal(null);
+      setJobPayAmount("");
+      setJobPayFile(null);
+      loadJobRevenue();
+      loadSummary();
+    } catch (e) {
+      toast("Failed to record payment", "error");
+    }
+  };
+
+  const submitLedgerEntry = async () => {
+    if (!lf.description || !lf.amount) {
+      toast("Description and amount required", "warn");
+      return;
+    }
+    try {
+      const receiptUrl = await uploadReceipt(lf.file);
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/finance/ledger`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entry_type: lf.entry_type,
+          description: lf.description,
+          amount: parseFloat(lf.amount) || 0,
+          receipt_url: receiptUrl,
+          entry_date: lf.entry_date,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      toast("Entry added ✓", "success");
+      setShowLedgerAdd(false);
+      setLf({ entry_type: "revenue", description: "", amount: "", entry_date: new Date().toISOString().slice(0, 10), file: null });
+      loadLedger();
+      loadSummary();
+    } catch (e) {
+      toast("Failed to add entry", "error");
+    }
+  };
+
+  const deleteLedgerEntry = async (id) => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/finance/ledger/${id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error();
+      toast("Entry deleted", "success");
+      loadLedger();
+      loadSummary();
+    } catch (e) {
+      toast("Failed to delete entry", "error");
+    }
+  };
+
   return (
     <div>
       {payModal && (
         <Modal
           title="Log payment"
-          sub={(payModal.user?.full_name || "Staff") + " · " + periodLabel}
+          sub={(payModal.user?.full_name || "Staff") + " · " + (summary?.period || "")}
           onClose={() => { setPayModal(null); setPayAmount(""); }}
           footer={
             <>
@@ -4666,15 +4826,8 @@ function Finance({ toast }) {
             </>
           }
         >
-          <div
-            style={{
-              fontSize: 12,
-              color: T.sub,
-              marginBottom: 12,
-              lineHeight: 1.6,
-            }}
-          >
-            Only log this once the payment has actually been made (cash, transfer, etc). Calculated net pay is{" "}
+          <div style={{ fontSize: 12, color: T.sub, marginBottom: 12, lineHeight: 1.6 }}>
+            Only log this once the payment has actually been made. Calculated net pay is{" "}
             <b style={{ color: T.text }}>${(payModal.net_pay || 0).toFixed(2)}</b>.
           </div>
           <div className="ff">
@@ -4691,14 +4844,109 @@ function Finance({ toast }) {
         </Modal>
       )}
 
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 9,
-          marginBottom: 3,
-        }}
-      >
+      {jobPayModal && (
+        <Modal
+          title="Record payment"
+          sub={jobPayModal.service_type + " — " + jobPayModal.client_name}
+          onClose={() => { setJobPayModal(null); setJobPayAmount(""); setJobPayFile(null); }}
+          footer={
+            <>
+              <button className="btn" onClick={() => { setJobPayModal(null); setJobPayAmount(""); setJobPayFile(null); }}>
+                Cancel
+              </button>
+              <button className="btn btn-p" onClick={confirmJobPayment}>
+                Save
+              </button>
+            </>
+          }
+        >
+          <div className="ff">
+            <label className="fl">Amount received ($)</label>
+            <input
+              className="fi2"
+              type="number"
+              step="0.01"
+              value={jobPayAmount}
+              onChange={(e) => setJobPayAmount(e.target.value)}
+              placeholder="150.00"
+            />
+          </div>
+          <div className="ff">
+            <label className="fl">Payment screenshot / receipt</label>
+            <input type="file" accept="image/*,.pdf" onChange={(e) => setJobPayFile(e.target.files?.[0] || null)} />
+          </div>
+        </Modal>
+      )}
+
+      {showLedgerAdd && (
+        <Modal
+          title="New revenue / expense entry"
+          onClose={() => setShowLedgerAdd(false)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setShowLedgerAdd(false)}>
+                Cancel
+              </button>
+              <button className="btn btn-p" onClick={submitLedgerEntry}>
+                Save entry
+              </button>
+            </>
+          }
+        >
+          <div className="ff">
+            <label className="fl">Type</label>
+            <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+              {["revenue", "expense"].map((t) => (
+                <button
+                  key={t}
+                  className={`btn btn-sm${lf.entry_type === t ? " btn-p" : ""}`}
+                  style={{ flex: 1, textTransform: "capitalize" }}
+                  onClick={() => setLf((f) => ({ ...f, entry_type: t }))}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="ff">
+            <label className="fl">Description</label>
+            <input
+              className="fi2"
+              value={lf.description}
+              onChange={(e) => setLf((f) => ({ ...f, description: e.target.value }))}
+              placeholder="e.g. Grant disbursement, office supplies…"
+            />
+          </div>
+          <div className="frow2">
+            <div className="ff">
+              <label className="fl">Amount ($)</label>
+              <input
+                className="fi2"
+                type="number"
+                step="0.01"
+                value={lf.amount}
+                onChange={(e) => setLf((f) => ({ ...f, amount: e.target.value }))}
+                placeholder="100.00"
+              />
+            </div>
+            <div className="ff">
+              <label className="fl">Date</label>
+              <input
+                className="fi2"
+                type="date"
+                value={lf.entry_date}
+                onChange={(e) => setLf((f) => ({ ...f, entry_date: e.target.value }))}
+              />
+            </div>
+          </div>
+          <div className="ff">
+            <label className="fl">Receipt / screenshot (optional)</label>
+            <input type="file" accept="image/*,.pdf" onChange={(e) => setLf((f) => ({ ...f, file: e.target.files?.[0] || null }))} />
+          </div>
+        </Modal>
+      )}
+
+      <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 3 }}>
         <div className="page-title" style={{ marginBottom: 0 }}>
           Finance & Payroll
         </div>
@@ -4706,8 +4954,11 @@ function Finance({ toast }) {
           🔐 Admin only
         </span>
       </div>
-      <div className="page-sub">
-        Pay period: {periodLabel} · Revenue · Payroll · Pay stubs
+      <div className="page-sub" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>Period: {summary?.period || ""}</span>
+        <button className="btn btn-sm" onClick={() => generateFinanceReport(summary, jobRevenue, ledger)}>
+          📄 Generate monthly report
+        </button>
       </div>
       <div className="fin-grid">
         <div className="fin-card">
@@ -4733,207 +4984,269 @@ function Finance({ toast }) {
           <div className="fin-val">{summary?.total_jobs || 0}</div>
         </div>
       </div>
+
       <div className="tabs">
         {[
-          ["overview", "Overview"],
-          ["payroll", "Payroll"],
-          ["hours", "Hours Log"],
+          ["workforce", "Workforce Revenue"],
+          ["other", "Other Revenue & Expenses"],
         ].map(([k, l]) => (
           <button
             key={k}
-            className={`tab${tab === k ? " on" : ""}`}
-            onClick={() => setTab(k)}
+            className={`tab${topTab === k ? " on" : ""}`}
+            onClick={() => setTopTab(k)}
           >
             {l}
           </button>
         ))}
       </div>
-      {tab === "overview" && (
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-          <div className="tbl">
-            <table>
-              <thead>
-                <tr>
-                  <th>Job / Site</th>
-                  <th>Client</th>
-                  <th>Service</th>
-                  <th>Amount</th>
-                  <th>Stage</th>
-                </tr>
-              </thead>
-              <tbody>
-                {periodJobs.map((j) => (
-                  <tr key={j.id}>
-                    <td className="nm" style={{ fontSize: 11 }}>
-                      {j.address.split(",")[0]}
-                    </td>
-                    <td>{j.client?.full_name || "—"}</td>
-                    <td
-                      style={{
-                        fontSize: 11,
-                        maxWidth: 140,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {j.service_type}
-                    </td>
-                    <td
-                      style={{
-                        color: j.stage === "invoiced" ? T.green : T.amber,
-                        fontWeight: 700,
-                      }}
-                    >
-                      ${Number(j.price).toFixed(2)}
-                    </td>
-                    <td>
-                      <span className={`badge ${stageColor(j.stage)}`}>
-                        {stageLabel(j.stage)}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-                {!periodJobs.length && (
-                  <tr>
-                    <td colSpan={5} style={{ textAlign: "center", color: T.muted, padding: "20px 0" }}>
-                      No jobs scheduled this pay period yet
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+
+      {topTab === "workforce" && (
+        <>
+          <div className="tabs" style={{ marginTop: 10 }}>
+            {[
+              ["overview", "Overview"],
+              ["payroll", "Payroll"],
+            ].map(([k, l]) => (
+              <button
+                key={k}
+                className={`tab${subTab === k ? " on" : ""}`}
+                onClick={() => setSubTab(k)}
+              >
+                {l}
+              </button>
+            ))}
           </div>
-        </div>
+
+          {subTab === "overview" && (
+            <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+              <div className="tbl">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Job</th>
+                      <th>Client</th>
+                      <th>Stage</th>
+                      <th>Payment</th>
+                      <th>Receipt</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {jobRevenue.map((j) => (
+                      <tr key={j.job_id}>
+                        <td className="nm" style={{ fontSize: 11 }}>{j.service_type}</td>
+                        <td style={{ fontSize: 11 }}>{j.client_name}</td>
+                        <td>
+                          <span className={`badge ${stageColor(j.stage)}`}>{stageLabel(j.stage)}</span>
+                        </td>
+                        <td style={{ fontWeight: 700, color: j.payment_amount != null ? T.green : T.muted }}>
+                          {j.payment_amount != null ? "$" + Number(j.payment_amount).toFixed(2) : "Not entered"}
+                        </td>
+                        <td>
+                          {j.receipt_url ? (
+                            <a href={j.receipt_url} target="_blank" rel="noreferrer" style={{ color: T.blue, fontSize: 11 }}>
+                              View
+                            </a>
+                          ) : (
+                            <span style={{ fontSize: 11, color: T.muted }}>—</span>
+                          )}
+                        </td>
+                        <td>
+                          <button
+                            className="btn btn-xs"
+                            onClick={() => {
+                              setJobPayModal(j);
+                              setJobPayAmount(j.payment_amount != null ? String(j.payment_amount) : "");
+                            }}
+                          >
+                            {j.payment_amount != null ? "Edit payment" : "Enter payment"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!jobRevenue.length && (
+                      <tr>
+                        <td colSpan={6} style={{ textAlign: "center", color: T.muted, padding: "20px 0" }}>
+                          No completed or invoiced jobs yet
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {subTab === "payroll" && (
+            <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+              <div className="tbl">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Staff</th>
+                      <th>ID</th>
+                      <th>Hours</th>
+                      <th>Rate</th>
+                      <th>Gross pay</th>
+                      <th>Adjustment</th>
+                      <th>Net pay</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {payroll.map((p) => (
+                      <tr key={p.user_id}>
+                        <td className="nm">{p.user?.full_name}</td>
+                        <td>
+                          <IdBadge uid={p.user?.display_id} />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            className="fi"
+                            style={{ width: 60, padding: "3px 6px", fontSize: 11 }}
+                            defaultValue={p.total_hours || ""}
+                            placeholder="0"
+                            onChange={(e) =>
+                              setHoursInputs((prev) => ({
+                                ...prev,
+                                [p.user_id]: { ...prev[p.user_id], hours: e.target.value, rate: prev[p.user_id]?.rate ?? p.hourly_rate },
+                              }))
+                            }
+                            onBlur={() => saveHours(p.user_id)}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            className="fi"
+                            style={{ width: 60, padding: "3px 6px", fontSize: 11 }}
+                            defaultValue={p.hourly_rate || ""}
+                            placeholder="0"
+                            onChange={(e) =>
+                              setHoursInputs((prev) => ({
+                                ...prev,
+                                [p.user_id]: { ...prev[p.user_id], rate: e.target.value, hours: prev[p.user_id]?.hours ?? p.total_hours },
+                              }))
+                            }
+                            onBlur={() => saveHours(p.user_id)}
+                          />
+                        </td>
+                        <td style={{ fontWeight: 600 }}>${(p.gross_pay || 0).toFixed(2)}</td>
+                        <td>
+                          <input
+                            type="number"
+                            className="fi"
+                            style={{ width: 76, padding: "3px 6px", fontSize: 11 }}
+                            value={adjInputs[p.user_id] ?? (p.adjustment || 0)}
+                            placeholder="0.00"
+                            onChange={(e) => setAdjInputs((prev) => ({ ...prev, [p.user_id]: e.target.value }))}
+                            onBlur={() => saveAdjustment(p.user_id)}
+                          />
+                        </td>
+                        <td style={{ color: T.green, fontWeight: 700 }}>
+                          ${(p.net_pay || 0).toFixed(2)}
+                          {p.paid && (
+                            <div style={{ fontSize: 9, color: T.muted, fontWeight: 400 }}>
+                              ✓ Paid ${((p.paid_amount || 0)).toFixed(2)}
+                            </div>
+                          )}
+                        </td>
+                        <td style={{ display: "flex", gap: 5 }}>
+                          <button
+                            className="btn btn-xs"
+                            onClick={() => { setPayModal(p); setPayAmount((p.net_pay || 0).toFixed(2)); }}
+                          >
+                            {p.paid ? "Re-log" : "Log payment"}
+                          </button>
+                          <button className="btn btn-xs btn-p" onClick={() => generatePayStub(p)}>
+                            Pay stub
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {!payroll.length && (
+                      <tr>
+                        <td colSpan={8} style={{ textAlign: "center", color: T.muted, padding: "20px 0" }}>
+                          No staff accounts yet
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </>
       )}
-      {tab === "payroll" && (
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-          <div className="tbl">
-            <table>
-              <thead>
-                <tr>
-                  <th>Staff</th>
-                  <th>ID</th>
-                  <th>Hours</th>
-                  <th>Rate</th>
-                  <th>Gross pay</th>
-                  <th>Adjustment</th>
-                  <th>Net pay</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {payroll.map((p) => (
-                  <tr key={p.user_id}>
-                    <td className="nm">{p.user?.full_name}</td>
-                    <td>
-                      <IdBadge uid={p.user?.display_id} />
-                    </td>
-                    <td>{(p.total_hours || 0).toFixed(1)}h</td>
-                    <td style={{ color: T.muted }}>${(p.hourly_rate || 0).toFixed(2)}/h</td>
-                    <td style={{ fontWeight: 600 }}>${(p.gross_pay || 0).toFixed(2)}</td>
-                    <td>
-                      <input
-                        type="number"
-                        className="fi"
-                        style={{ width: 76, padding: "3px 6px", fontSize: 11 }}
-                        value={adjInputs[p.user_id] ?? (p.adjustment || 0)}
-                        placeholder="0.00"
-                        onChange={(e) => setAdjInputs((prev) => ({ ...prev, [p.user_id]: e.target.value }))}
-                        onBlur={() => saveAdjustment(p.user_id)}
-                      />
-                    </td>
-                    <td style={{ color: T.green, fontWeight: 700 }}>
-                      ${(p.net_pay || 0).toFixed(2)}
-                      {p.paid && (
-                        <div style={{ fontSize: 9, color: T.muted, fontWeight: 400 }}>
-                          ✓ Paid ${((p.paid_amount || 0)).toFixed(2)}
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ display: "flex", gap: 5 }}>
-                      <button
-                        className="btn btn-xs"
-                        onClick={() => { setPayModal(p); setPayAmount((p.net_pay || 0).toFixed(2)); }}
-                      >
-                        {p.paid ? "Re-log payment" : "Log payment"}
-                      </button>
-                      <button
-                        className="btn btn-xs btn-p"
-                        onClick={() => generatePayStub(p)}
-                      >
-                        Pay stub
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {!payroll.length && (
-                  <tr>
-                    <td colSpan={8} style={{ textAlign: "center", color: T.muted, padding: "20px 0" }}>
-                      No staff accounts yet
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+
+      {topTab === "other" && (
+        <>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10, marginBottom: 10 }}>
+            <button className="btn btn-p" onClick={() => setShowLedgerAdd(true)}>
+              + New entry
+            </button>
           </div>
-        </div>
-      )}
-      {tab === "hours" && (
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-          <div className="tbl">
-            <table>
-              <thead>
-                <tr>
-                  <th>Staff</th>
-                  <th>ID</th>
-                  <th>Jobs this period</th>
-                  <th>Total hours</th>
-                  <th>Rate</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {payroll.map((p) => (
-                  <tr key={p.user_id}>
-                    <td className="nm">{p.user?.full_name}</td>
-                    <td>
-                      <IdBadge uid={p.user?.display_id} />
-                    </td>
-                    <td>
-                      <span className="badge b-p">{p.job_count || 0}</span>
-                    </td>
-                    <td>
-                      <span className="badge b-a">{(p.total_hours || 0).toFixed(1)}h</span>
-                    </td>
-                    <td style={{ fontSize: 11 }}>${(p.hourly_rate || 0).toFixed(2)}/h</td>
-                    <td style={{ display: "flex", gap: 5 }}>
-                      <button
-                        className="btn btn-xs"
-                        onClick={() => { setPayModal(p); setPayAmount((p.net_pay || 0).toFixed(2)); }}
-                      >
-                        {p.paid ? "Re-log payment" : "Log payment"}
-                      </button>
-                      <button
-                        className="btn btn-xs btn-p"
-                        onClick={() => generatePayStub(p)}
-                      >
-                        Generate pay stub
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {!payroll.length && (
+          <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+            <div className="tbl">
+              <table>
+                <thead>
                   <tr>
-                    <td colSpan={6} style={{ textAlign: "center", color: T.muted, padding: "20px 0" }}>
-                      No staff accounts yet
-                    </td>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Description</th>
+                    <th>Amount</th>
+                    <th>Receipt</th>
+                    <th></th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {ledger.map((e) => (
+                    <tr key={e.id}>
+                      <td style={{ fontSize: 11 }}>{new Date(e.entry_date).toLocaleDateString()}</td>
+                      <td>
+                        <span className={`badge ${e.entry_type === "revenue" ? "b-g" : "b-r"}`} style={{ textTransform: "capitalize" }}>
+                          {e.entry_type}
+                        </span>
+                      </td>
+                      <td className="nm" style={{ fontSize: 11 }}>{e.description}</td>
+                      <td style={{ fontWeight: 700, color: e.entry_type === "revenue" ? T.green : T.red }}>
+                        ${Number(e.amount).toFixed(2)}
+                      </td>
+                      <td>
+                        {e.receipt_url ? (
+                          <a href={e.receipt_url} target="_blank" rel="noreferrer" style={{ color: T.blue, fontSize: 11 }}>
+                            View
+                          </a>
+                        ) : (
+                          <span style={{ fontSize: 11, color: T.muted }}>—</span>
+                        )}
+                      </td>
+                      <td>
+                        <button
+                          className="btn btn-xs"
+                          style={{ color: T.red, borderColor: T.red + "44" }}
+                          onClick={() => {
+                            if (window.confirm("Delete this entry?")) deleteLedgerEntry(e.id);
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!ledger.length && (
+                    <tr>
+                      <td colSpan={6} style={{ textAlign: "center", color: T.muted, padding: "20px 0" }}>
+                        No entries this month
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );
@@ -6843,7 +7156,7 @@ function StaffMyHours({ toast }) {
 function StaffPayStub({ toast, user }) {
   const [p, setP] = useState(null);
   const [loading, setLoading] = useState(true);
-  const { label: periodLabel } = currentPayPeriod();
+  const periodLabel = p?.period || "";
 
   const getToken = async () => {
     const { data: { session } } = await supabase.auth.getSession();
