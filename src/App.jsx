@@ -3295,6 +3295,22 @@ function CRMBoard({ toast }) {
     }
   };
 
+  const deleteJob = async (jobId) => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/crm/jobs/${jobId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error();
+      toast("Job deleted", "success");
+      setSelJob(null);
+      loadJobs();
+    } catch (e) {
+      toast("Failed to delete job", "error");
+    }
+  };
+
   const toggleAssign = async (job, u) => {
     const alreadyAssigned = (job.assignments || []).some((a) => a.user_id === u.id);
     try {
@@ -3368,22 +3384,32 @@ function CRMBoard({ toast }) {
               </>
             ) : (
               <>
+                <button
+                  className="btn"
+                  style={{ color: T.red, borderColor: T.red + "44" }}
+                  onClick={() => {
+                    if (window.confirm("Delete this job permanently? This cannot be undone.")) {
+                      deleteJob(selJob.id);
+                    }
+                  }}
+                >
+                  Delete
+                </button>
                 <button className="btn" onClick={() => setSelJob(null)}>
                   Close
                 </button>
                 <button className="btn" onClick={() => startEdit(selJob)}>
                   Edit
                 </button>
-                {STAGES[STAGES.indexOf(selJob.stage) + 1] && (
+                {selJob.stage === "completed" && (
                   <button
                     className="btn btn-p"
                     onClick={() => {
-                      advance(selJob.id, STAGES[STAGES.indexOf(selJob.stage) + 1]);
-                      toast("Stage advanced ✓", "success");
+                      advance(selJob.id, "invoiced");
+                      toast("Moved to Invoiced ✓", "success");
                     }}
                   >
-                    Advance →{" "}
-                    {stageLabel(STAGES[STAGES.indexOf(selJob?.stage) + 1] || "")}
+                    Advance → Invoiced
                   </button>
                 )}
               </>
