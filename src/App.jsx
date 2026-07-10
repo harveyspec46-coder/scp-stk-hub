@@ -1905,69 +1905,271 @@ function BoardDashboard({ onNav, toast, user }) {
 
 // ── Programs ─────────────────────────────────────────────────────────────────
 function Programs({ toast }) {
+  const [programs, setPrograms] = useState([]);
   const [sel, setSel] = useState(null);
   const [filter, setFilter] = useState("all");
-  const [programs, setPrograms] = useState(MOCK_PROGRAMS);
+  const [docs, setDocs] = useState([]);
+  const [ledger, setLedger] = useState([]);
   const [showAddProg, setShowAddProg] = useState(false);
-  const [progForm, setProgForm] = useState({
-    name: "",
-    sub: "",
-    off: "both",
-    icon: "🌟",
+  const [showAddLedger, setShowAddLedger] = useState(false);
+  const [progForm, setProgForm] = useState({ name: "", sub: "", off: "both", icon: "🌟" });
+  const [lf, setLf] = useState({
+    full_name: "", phone: "", address: "", help_needed: "",
+    helped_on: new Date().toISOString().slice(0, 10), notes: "", program_ids: [],
   });
-  const shown = programs.filter(
-    (p) => filter === "all" || p.off === filter || p.off === "both"
-  );
-  const docs = [];
+
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token;
+  };
+
+  const loadPrograms = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/programs`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setPrograms(json.data || []);
+    } catch (e) {
+      toast("Failed to load programs", "error");
+    }
+  };
+
+  useEffect(() => {
+    loadPrograms();
+  }, []);
+
+  const loadDocs = async (programId) => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/programs/${programId}/documents`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setDocs(json.data || []);
+    } catch (e) { /* silent */ }
+  };
+
+  const loadLedger = async (programId) => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/programs/${programId}/ledger`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setLedger(json.data || []);
+    } catch (e) { /* silent */ }
+  };
+
+  const openProgram = (id) => {
+    setSel(id);
+    loadDocs(id);
+    loadLedger(id);
+  };
+
+  const createProgram = async () => {
+    if (!progForm.name) {
+      toast("Program name required", "warn");
+      return;
+    }
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/programs`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ name: progForm.name, sub: progForm.sub, office: progForm.off, icon: progForm.icon }),
+      });
+      if (!res.ok) throw new Error();
+      setShowAddProg(false);
+      setProgForm({ name: "", sub: "", off: "both", icon: "🌟" });
+      toast("Program added ✓", "success");
+      loadPrograms();
+    } catch (e) {
+      toast("Failed to add program", "error");
+    }
+  };
+
+  const uploadDocument = async (programId, file) => {
+    if (!file) return;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const path = `${session.user.id}/${Date.now()}_${file.name}`;
+      const { error } = await supabase.storage.from("Organization Document").upload(path, file);
+      if (error) throw error;
+      const { data: urlData } = supabase.storage.from("Organization Document").getPublicUrl(path);
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/programs/${programId}/documents`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ name: file.name, url: urlData.publicUrl, file_type: file.name.split(".").pop() || "" }),
+      });
+      if (!res.ok) throw new Error();
+      toast("Document uploaded ✓", "success");
+      loadDocs(programId);
+      loadPrograms();
+    } catch (e) {
+      toast("Failed to upload document", "error");
+    }
+  };
+
+  const toggleLedgerProgram = (pid) => {
+    setLf((f) => ({
+      ...f,
+      program_ids: f.program_ids.includes(pid)
+        ? f.program_ids.filter((x) => x !== pid)
+        : [...f.program_ids, pid],
+    }));
+  };
+
+  const submitLedgerEntry = async () => {
+    if (!lf.full_name) {
+      toast("Name required", "warn");
+      return;
+    }
+    if (lf.program_ids.length === 0) {
+      toast("Select at least one program", "warn");
+      return;
+    }
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/program-ledger`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(lf),
+      });
+      if (!res.ok) throw new Error();
+      toast("Person added to ledger ✓", "success");
+      setShowAddLedger(false);
+      setLf({ full_name: "", phone: "", address: "", help_needed: "", helped_on: new Date().toISOString().slice(0, 10), notes: "", program_ids: [] });
+      loadLedger(sel);
+    } catch (e) {
+      toast("Failed to add ledger entry", "error");
+    }
+  };
+
+  const shown = programs.filter((p) => filter === "all" || p.office === filter || p.office === "both");
 
   if (sel) {
     const p = programs.find((x) => x.id === sel);
-    const parts = [];
+    if (!p) return null;
     return (
       <div>
-        <button
-          className="btn btn-ghost"
-          style={{ marginBottom: 12 }}
-          onClick={() => setSel(null)}
-        >
+        {showAddLedger && (
+          <Modal
+            title="Add person helped"
+            sub={p.name}
+            onClose={() => setShowAddLedger(false)}
+            footer={
+              <>
+                <button className="btn" onClick={() => setShowAddLedger(false)}>
+                  Cancel
+                </button>
+                <button className="btn btn-p" onClick={submitLedgerEntry}>
+                  Save
+                </button>
+              </>
+            }
+          >
+            <div className="ff">
+              <label className="fl">Full name</label>
+              <input
+                className="fi2"
+                value={lf.full_name}
+                onChange={(e) => setLf((f) => ({ ...f, full_name: e.target.value }))}
+                placeholder="Person's name"
+              />
+            </div>
+            <div className="frow2">
+              <div className="ff">
+                <label className="fl">Phone</label>
+                <input
+                  className="fi2"
+                  value={lf.phone}
+                  onChange={(e) => setLf((f) => ({ ...f, phone: e.target.value }))}
+                  placeholder="206-555-0100"
+                />
+              </div>
+              <div className="ff">
+                <label className="fl">Date helped</label>
+                <input
+                  className="fi2"
+                  type="date"
+                  value={lf.helped_on}
+                  onChange={(e) => setLf((f) => ({ ...f, helped_on: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="ff">
+              <label className="fl">Address</label>
+              <input
+                className="fi2"
+                value={lf.address}
+                onChange={(e) => setLf((f) => ({ ...f, address: e.target.value }))}
+                placeholder="Street, city"
+              />
+            </div>
+            <div className="ff">
+              <label className="fl">What they need help with</label>
+              <textarea
+                className="ftxt"
+                value={lf.help_needed}
+                onChange={(e) => setLf((f) => ({ ...f, help_needed: e.target.value }))}
+                placeholder="e.g. Food assistance, housing referral…"
+              />
+            </div>
+            <div className="ff">
+              <label className="fl">Notes (optional)</label>
+              <textarea
+                className="ftxt"
+                value={lf.notes}
+                onChange={(e) => setLf((f) => ({ ...f, notes: e.target.value }))}
+              />
+            </div>
+            <div className="ff">
+              <label className="fl">Associated programs</label>
+              <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginTop: 4 }}>
+                {programs.map((prog) => {
+                  const checked = lf.program_ids.includes(prog.id);
+                  return (
+                    <button
+                      key={prog.id}
+                      type="button"
+                      className={`btn btn-sm${checked ? " btn-p" : ""}`}
+                      onClick={() => toggleLedgerProgram(prog.id)}
+                    >
+                      {prog.icon} {prog.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </Modal>
+        )}
+
+        <button className="btn btn-ghost" style={{ marginBottom: 12 }} onClick={() => setSel(null)}>
           ← All programs
         </button>
-        <div
-          className="card"
-          style={{ marginBottom: 13, position: "relative", overflow: "hidden" }}
-        >
+        <div className="card" style={{ marginBottom: 13, position: "relative", overflow: "hidden" }}>
           <div
             style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              bottom: 0,
-              width: 4,
+              position: "absolute", top: 0, left: 0, bottom: 0, width: 4,
               background: `linear-gradient(180deg,${T.pink2},${T.pink})`,
             }}
           />
           <div style={{ paddingLeft: 14 }}>
-            <div
-              style={{
-                fontFamily: "var(--fd)",
-                fontSize: 21,
-                color: T.white,
-                marginBottom: 3,
-              }}
-            >
+            <div style={{ fontFamily: "var(--fd)", fontSize: 21, color: T.white, marginBottom: 3 }}>
               {p.icon} {p.name}
             </div>
-            <div style={{ fontSize: 12, color: T.muted, marginBottom: 11 }}>
-              {p.sub}
-            </div>
+            <div style={{ fontSize: 12, color: T.muted, marginBottom: 11 }}>{p.sub}</div>
             <div style={{ display: "flex", gap: 18 }}>
               <span style={{ fontSize: 12, color: T.sub }}>
-                <b style={{ color: T.white }}>0</b> participants
+                <b style={{ color: T.white }}>{ledger.length}</b> people helped
               </span>
               <span style={{ fontSize: 12, color: T.sub }}>
-                <b style={{ color: T.white }}>0</b> documents
+                <b style={{ color: T.white }}>{docs.length}</b> documents
               </span>
-              <OfficePill o={p.off} />
+              <OfficePill o={p.office} />
             </div>
           </div>
         </div>
@@ -1975,89 +2177,68 @@ function Programs({ toast }) {
           <div className="card">
             <div className="sec-hdr">
               <div className="sec-title">Documents</div>
-              <button
-                className="btn btn-sm btn-p"
-                onClick={() => toast("Upload — Supabase Storage")}
-              >
-                "+ Upload"
-              </button>
+              <label className="btn btn-sm btn-p" style={{ cursor: "pointer" }}>
+                + Upload
+                <input
+                  type="file"
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) uploadDocument(sel, file);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
             </div>
-            {docs.slice(0, 5).map((d, i) => (
-              <div
-                key={i}
+            {docs.map((d) => (
+                <a
+                key={d.id}
+                href={d.url}
+                target="_blank"
+                rel="noreferrer"
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "7px 8px",
-                  borderRadius: 6,
-                  cursor: "pointer",
+                  display: "flex", alignItems: "center", gap: 8, padding: "7px 8px",
+                  borderRadius: 6, textDecoration: "none",
                 }}
-                onMouseEnter={(e) =>
-                  (e.currentTarget.style.background = "rgba(255,255,255,.04)")
-                }
-                onMouseLeave={(e) =>
-                  (e.currentTarget.style.background = "transparent")
-                }
-                onClick={() => toast("Opening " + d)}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,255,255,.04)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
               >
                 <span>📄</span>
-                <span style={{ flex: 1, fontSize: 12, color: T.text }}>
-                  {d}
-                </span>
-                <span className="badge b-gr">
-                  {d.split(".").pop().toUpperCase()}
-                </span>
-              </div>
+                <span style={{ flex: 1, fontSize: 12, color: T.text }}>{d.name}</span>
+                <span className="badge b-gr">{(d.file_type || "").toUpperCase()}</span>
+              </a>
             ))}
+            {!docs.length && (
+              <div style={{ fontSize: 12, color: T.muted, padding: "8px 0" }}>No documents yet.</div>
+            )}
           </div>
           <div className="card">
             <div className="sec-hdr">
-              <div className="sec-title">Participants ({parts.length})</div>
-              <button
-                className="btn btn-sm btn-p"
-                onClick={() => toast("Add participant to " + p.name)}
-              >
-                "+ Add"
+              <div className="sec-title">People Helped ({ledger.length})</div>
+              <button className="btn btn-sm btn-p" onClick={() => setShowAddLedger(true)}>
+                + Add
               </button>
             </div>
-            {parts.length === 0 ? (
-              <div style={{ fontSize: 12, color: T.muted }}>
-                No participants linked yet.
-              </div>
+            {ledger.length === 0 ? (
+              <div style={{ fontSize: 12, color: T.muted }}>No records yet.</div>
             ) : (
-              parts.map((pt, i) => (
+              ledger.map((e, i) => (
                 <div
-                  key={i}
+                  key={e.id}
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "7px 0",
-                    borderBottom:
-                      i < parts.length - 1 ? "1px solid var(--border)" : "none",
+                    display: "flex", alignItems: "flex-start", gap: 8, padding: "7px 0",
+                    borderBottom: i < ledger.length - 1 ? "1px solid var(--border)" : "none",
                   }}
                 >
-                  <div
-                    className="av"
-                    style={{ width: 25, height: 25, fontSize: 9 }}
-                  >
-                    {pt.name
-                      .split(" ")
-                      .map((n) => n[0])
-                      .join("")}
+                  <div className="av" style={{ width: 25, height: 25, fontSize: 9, flexShrink: 0 }}>
+                    {e.full_name.split(" ").map((n) => n[0]).join("").slice(0, 2)}
                   </div>
                   <div style={{ flex: 1 }}>
-                    <div
-                      style={{ fontSize: 12, color: T.text, fontWeight: 600 }}
-                    >
-                      {pt.name}
-                    </div>
+                    <div style={{ fontSize: 12, color: T.text, fontWeight: 600 }}>{e.full_name}</div>
                     <div style={{ fontSize: 10, color: T.muted }}>
-                      {pt.stage} · <IdBadge uid={pt.staff} />
+                      {e.help_needed || "—"} · {new Date(e.helped_on).toLocaleDateString()}
                     </div>
                   </div>
-                  <span className={`mode-pill mode-${pt.mode}`}>{pt.mode}</span>
                 </div>
               ))
             )}
@@ -2079,42 +2260,7 @@ function Programs({ toast }) {
               <button className="btn" onClick={() => setShowAddProg(false)}>
                 Cancel
               </button>
-              <button
-                className="btn btn-p"
-                onClick={() => {
-                  if (!progForm.name) {
-                    toast("Program name required", "warn");
-                    return;
-                  }
-                  const icons = [
-                    "🌟",
-                    "🌍",
-                    "⚖️",
-                    "🌱",
-                    "💙",
-                    "💼",
-                    "🌾",
-                    "🤝",
-                    "🏠",
-                    "📚",
-                    "🎯",
-                    "💡",
-                  ];
-                  setPrograms((prev) => [
-                    ...prev,
-                    {
-                      id: prev.length + 1,
-                      name: progForm.name,
-                      sub: progForm.sub || "New program",
-                      off: progForm.off,
-                      icon: progForm.icon,
-                                                        },
-                  ]);
-                  setShowAddProg(false);
-                  setProgForm({ name: "", sub: "", off: "both", icon: "🌟" });
-                  toast("Program added ✓", "success");
-                }}
-              >
+              <button className="btn btn-p" onClick={createProgram}>
                 Add program
               </button>
             </>
@@ -2125,9 +2271,7 @@ function Programs({ toast }) {
             <input
               className="fi2"
               value={progForm.name}
-              onChange={(e) =>
-                setProgForm((f) => ({ ...f, name: e.target.value }))
-              }
+              onChange={(e) => setProgForm((f) => ({ ...f, name: e.target.value }))}
               placeholder="e.g. Youth Leadership Initiative"
             />
           </div>
@@ -2136,9 +2280,7 @@ function Programs({ toast }) {
             <input
               className="fi2"
               value={progForm.sub}
-              onChange={(e) =>
-                setProgForm((f) => ({ ...f, sub: e.target.value }))
-              }
+              onChange={(e) => setProgForm((f) => ({ ...f, sub: e.target.value }))}
               placeholder="e.g. Mentorship and leadership training"
             />
           </div>
@@ -2148,9 +2290,7 @@ function Programs({ toast }) {
               <select
                 className="fsel"
                 value={progForm.off}
-                onChange={(e) =>
-                  setProgForm((f) => ({ ...f, off: e.target.value }))
-                }
+                onChange={(e) => setProgForm((f) => ({ ...f, off: e.target.value }))}
               >
                 <option value="both">Both offices</option>
                 <option value="north">Woodinville (North)</option>
@@ -2159,33 +2299,11 @@ function Programs({ toast }) {
             </div>
             <div className="ff">
               <label className="fl">Icon</label>
-              <div
-                style={{
-                  display: "flex",
-                  gap: 6,
-                  flexWrap: "wrap",
-                  marginTop: 4,
-                }}
-              >
-                {[
-                  "🌟",
-                  "🌍",
-                  "⚖️",
-                  "🌱",
-                  "💙",
-                  "💼",
-                  "🌾",
-                  "🤝",
-                  "🏠",
-                  "📚",
-                  "🎯",
-                  "💡",
-                ].map((ic) => (
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                {["🌟", "🌍", "⚖️", "🌱", "💙", "💼", "🌾", "🤝", "🏠", "📚", "🎯", "💡"].map((ic) => (
                   <button
                     key={ic}
-                    className={`btn btn-xs${
-                      progForm.icon === ic ? " btn-p" : ""
-                    }`}
+                    className={`btn btn-xs${progForm.icon === ic ? " btn-p" : ""}`}
                     style={{ fontSize: 16, padding: "4px 8px" }}
                     onClick={() => setProgForm((f) => ({ ...f, icon: ic }))}
                   >
@@ -2197,58 +2315,45 @@ function Programs({ toast }) {
           </div>
         </Modal>
       )}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 4,
-        }}
-      >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
         <div className="page-title">Programs</div>
         <button className="btn btn-p" onClick={() => setShowAddProg(true)}>
           + Add program
         </button>
       </div>
       <div className="page-sub">
-        {programs.length} active programs · click to manage documents and
-        participants
+        {programs.length} active programs · click to manage documents and people helped
       </div>
       <div className="frow" style={{ marginBottom: 14 }}>
         {["all", "north", "south"].map((f) => (
-          <button
-            key={f}
-            className={`btn${filter === f ? " btn-p" : ""}`}
-            onClick={() => setFilter(f)}
-          >
-            {f === "all"
-              ? "All offices"
-              : f === "north"
-              ? "Woodinville (N)"
-              : "Tacoma (S)"}
+          <button key={f} className={`btn${filter === f ? " btn-p" : ""}`} onClick={() => setFilter(f)}>
+            {f === "all" ? "All offices" : f === "north" ? "Woodinville (N)" : "Tacoma (S)"}
           </button>
         ))}
       </div>
       <div className="prog-grid">
         {shown.map((p) => (
-          <div key={p.id} className="prog-card" onClick={() => setSel(p.id)}>
+          <div key={p.id} className="prog-card" onClick={() => openProgram(p.id)}>
             <div className="prog-bar" />
             <div className="prog-icon">{p.icon}</div>
             <div className="prog-name">{p.name}</div>
             <div className="prog-sub">{p.sub}</div>
             <div className="prog-meta">
-              <span className="prog-tag">0 participants</span>
-              <span className="prog-tag">0 docs</span>
-              <OfficePill o={p.off} />
+              <span className="prog-tag">{p.document_count || 0} docs</span>
+              <OfficePill o={p.office} />
             </div>
           </div>
         ))}
+        {!shown.length && (
+          <div style={{ fontSize: 12, color: T.muted, gridColumn: "1 / -1", textAlign: "center", padding: "30px 0" }}>
+            No programs yet — click "+ Add program" to create one.
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-// ── Participants Channel ──────────────────────────────────────────────────────
 function Participants({ toast }) {
   const [selPart, setSelPart] = useState(null);
   const [tab, setTab] = useState("list");
