@@ -2358,9 +2358,7 @@ function Participants({ toast }) {
   const [selPart, setSelPart] = useState(null);
   const [tab, setTab] = useState("list");
   const [parts, setParts] = useState([]);
-  const [mode, setMode] = useState("digital");
   const [search, setSearch] = useState("");
-  const [progF, setProgF] = useState("all");
   const [loading, setLoading] = useState(true);
 
   const getToken = async () => {
@@ -2380,10 +2378,8 @@ function Participants({ toast }) {
         pid: p.display_id || "",
         type: p.type || "participant",
         name: p.full_name,
-        program: p.program || "",
-        stage: p.stage || "Intake",
-        staff: p.assigned_staff || "—",
-        housing: p.housing_status || "Unstable",
+        city: p.city || "",
+        language: p.language || "English",
         mode: p.intake_mode || "digital",
         submitted: new Date(p.created_at).toLocaleDateString(),
         phone: p.phone || "",
@@ -2397,10 +2393,8 @@ function Participants({ toast }) {
   const [pForm, setPForm] = useState({
     name: "",
     phone: "",
-    program: "Pay It Forward",
+    city: "",
     language: "English",
-    housing: "Unstable",
-    staff: "",
     notes: "",
     type: "participant",
   });
@@ -2409,14 +2403,13 @@ function Participants({ toast }) {
   const filtered = parts.filter((p) => {
     const matchSearch =
       !search || p.name.toLowerCase().includes(search.toLowerCase());
-    const matchProg = progF === "all" || p.program === progF;
     const matchType =
       tab === "participants"
         ? p.type === "participant"
         : tab === "volunteers"
         ? p.type === "volunteer"
         : true; // "list" shows all
-    return matchSearch && matchProg && matchType;
+    return matchSearch && matchType;
   });
 
   return (
@@ -2432,7 +2425,7 @@ function Participants({ toast }) {
         <div>
           <div className="page-title">Participants</div>
           <div className="page-sub">
-            All program participants · Forms · Intake · PDF uploads
+            People who volunteered or worked as participants with the org
           </div>
         </div>
         <button className="btn btn-p" onClick={() => setTab("add")}>
@@ -2452,8 +2445,6 @@ function Participants({ toast }) {
             "Volunteers",
             parts.filter((p) => p.type === "volunteer").length,
           ],
-          ["forms", "Form Templates", 0],
-          ["uploads", "PDF Uploads", 0],
         ].map(([k, l, n]) => (
           <button
             key={k}
@@ -2476,16 +2467,6 @@ function Participants({ toast }) {
               placeholder="Search participants…"
               style={{ flex: 1, maxWidth: 240 }}
             />
-            <select
-              className="fi"
-              value={progF}
-              onChange={(e) => setProgF(e.target.value)}
-            >
-              <option value="all">All programs</option>
-              {MOCK_PROGRAMS.map((p) => (
-                <option key={p.id}>{p.name}</option>
-              ))}
-            </select>
           </div>
           <div className="card" style={{ padding: 0, overflow: "hidden" }}>
             <div className="tbl">
@@ -2495,10 +2476,9 @@ function Participants({ toast }) {
                     <th>Name</th>
                     <th>Type</th>
                     <th>ID</th>
-                    <th>Program</th>
-                    <th>Stage</th>
-                    <th>Staff</th>
-                    <th>Housing</th>
+                    <th>Phone</th>
+                    <th>City</th>
+                    <th>Language</th>
                     <th>Mode</th>
                     <th>Submitted</th>
                   </tr>
@@ -2539,26 +2519,9 @@ function Participants({ toast }) {
                       <td>
                         <IdBadge uid={p.pid} />
                       </td>
-                      <td style={{ fontSize: 11 }}>{p.program}</td>
-                      <td>
-                        <span className="badge b-b">{p.stage}</span>
-                      </td>
-                      <td>
-                        <IdBadge uid={p.staff} />
-                      </td>
-                      <td>
-                        <span
-                          className={`badge${
-                            p.housing === "Housed"
-                              ? " b-g"
-                              : p.housing === "SCP-linked"
-                              ? " b-p"
-                              : " b-a"
-                          }`}
-                        >
-                          {p.housing}
-                        </span>
-                      </td>
+                      <td style={{ fontSize: 11 }}>{p.phone || "—"}</td>
+                      <td style={{ fontSize: 11 }}>{p.city || "—"}</td>
+                      <td style={{ fontSize: 11 }}>{p.language}</td>
                       <td>
                         <span className={`mode-pill mode-${p.mode}`}>
                           {p.mode}
@@ -2569,23 +2532,18 @@ function Participants({ toast }) {
                       </td>
                     </tr>
                   ))}
+                  {!filtered.length && (
+                    <tr>
+                      <td colSpan={8} style={{ textAlign: "center", color: T.muted, padding: "20px 0" }}>
+                        No participants yet
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
           </div>
         </>
-      )}
-      {tab === "forms" && (
-        <div style={{ color: T.muted, fontSize: 12, padding: "20px 0" }}>No form templates yet.</div>
-      )}
-      {tab === "uploads" && (
-        <div>
-          <div className="upload-zone" onClick={() => toast("Upload — Supabase Storage")}>
-            <div style={{ fontSize: 28, marginBottom: 7 }}>📎</div>
-            <div style={{ fontSize: 13, color: T.text }}>Upload completed physical form</div>
-          </div>
-          <div style={{ color: T.muted, fontSize: 12 }}>No uploaded files yet.</div>
-        </div>
       )}
 
       {tab === "add" && (
@@ -2596,323 +2554,178 @@ function Participants({ toast }) {
               ← Back to list
             </button>
           </div>
-          <div style={{ display: "flex", gap: 7, marginBottom: 16 }}>
-            {[
-              ["digital", "📝 Fill in app"],
-              ["physical", "📄 Upload PDF"],
-              ["link", "🔗 Share link"],
-            ].map(([k, l]) => (
+          <div className="ff">
+            <label className="fl">Person type</label>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: 9,
+                marginTop: 4,
+              }}
+            >
               <button
-                key={k}
-                className={`btn${mode === k ? " btn-p" : ""}`}
-                onClick={() => setMode(k)}
-              >
-                {l}
-              </button>
-            ))}
-          </div>
-          {mode === "link" && (
-            <div style={{ textAlign: "center", padding: "24px 0" }}>
-              <div style={{ fontSize: 30, marginBottom: 10 }}>🔗</div>
-              <div
+                className={`btn${
+                  pForm.type === "participant" ? " btn-p" : ""
+                }`}
                 style={{
-                  fontSize: 14,
-                  fontWeight: 600,
-                  color: T.text,
-                  marginBottom: 6,
+                  flexDirection: "column",
+                  padding: "14px 10px",
+                  gap: 6,
+                  height: "auto",
+                  borderColor:
+                    pForm.type === "participant" ? T.pink : undefined,
                 }}
-              >
-                Shareable intake link
-              </div>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: T.muted,
-                  marginBottom: 18,
-                  maxWidth: 300,
-                  margin: "0 auto 18px",
-                }}
-              >
-                Participant opens in browser — no login needed. Record
-                auto-created on submit.
-              </div>
-              <div className="ff">
-                <select
-                  className="fsel"
-                  value={pForm.program}
-                  onChange={setF("program")}
-                >
-                  {MOCK_PROGRAMS.map((p) => (
-                    <option key={p.id}>{p.name}</option>
-                  ))}
-                </select>
-              </div>
-              <button
-                className="auth-btn"
-                style={{ maxWidth: 300 }}
                 onClick={() =>
-                  toast(
-                    "Link copied: https://hub.scp-stk.org/intake/" +
-                      pForm.program.toLowerCase().replace(/\s+/g, "-")
-                  )
+                  setPForm((f) => ({ ...f, type: "participant" }))
                 }
               >
-                📋 Copy intake link for {pForm.program}
-              </button>
-            </div>
-          )}
-          {mode === "physical" && (
-            <div>
-              <div
-                className="upload-zone"
-                onClick={() => toast("File picker — Supabase Storage ready")}
-              >
-                <div style={{ fontSize: 28, marginBottom: 7 }}>📎</div>
-                <div style={{ fontSize: 13, color: T.text, marginBottom: 3 }}>
-                  Click to upload completed PDF form
-                </div>
-                <div style={{ fontSize: 11, color: T.muted }}>
-                  Signed intake form, participant agreement · PDF · Max 10MB
-                </div>
-              </div>
-              <div className="frow2">
-                <div className="ff">
-                  <label className="fl">Participant name</label>
-                  <input
-                    className="fi2"
-                    value={pForm.name}
-                    onChange={setF("name")}
-                    placeholder="Full name"
-                  />
-                </div>
-                <div className="ff">
-                  <label className="fl">Program</label>
-                  <select
-                    className="fsel"
-                    value={pForm.program}
-                    onChange={setF("program")}
-                  >
-                    {MOCK_PROGRAMS.map((p) => (
-                      <option key={p.id}>{p.name}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <button
-                className="btn btn-p"
-                onClick={() => {
-                  toast("Physical form uploaded and linked ✓", "success");
-                  setTab("list");
-                }}
-              >
-                Save upload
-              </button>
-            </div>
-          )}
-          {mode === "digital" && (
-            <>
-              {/* Person type selector */}
-              <div className="ff">
-                <label className="fl">Person type</label>
-                <div
+                <span style={{ fontSize: 22 }}>🎓</span>
+                <span style={{ fontSize: 13, fontWeight: 700 }}>
+                  Participant
+                </span>
+                <span
                   style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    gap: 9,
-                    marginTop: 4,
+                    fontSize: 10,
+                    color:
+                      pForm.type === "participant"
+                        ? "rgba(255,255,255,.7)"
+                        : T.muted,
+                    lineHeight: 1.4,
                   }}
                 >
-                  <button
-                    className={`btn${
-                      pForm.type === "participant" ? " btn-p" : ""
-                    }`}
-                    style={{
-                      flexDirection: "column",
-                      padding: "14px 10px",
-                      gap: 6,
-                      height: "auto",
-                      borderColor:
-                        pForm.type === "participant" ? T.pink : undefined,
-                    }}
-                    onClick={() =>
-                      setPForm((f) => ({ ...f, type: "participant" }))
-                    }
-                  >
-                    <span style={{ fontSize: 22 }}>🎓</span>
-                    <span style={{ fontSize: 13, fontWeight: 700 }}>
-                      Participant
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 10,
-                        color:
-                          pForm.type === "participant"
-                            ? "rgba(255,255,255,.7)"
-                            : T.muted,
-                        lineHeight: 1.4,
-                      }}
-                    >
-                      Someone who has gone through or is enrolled in our
-                      programs
-                    </span>
-                  </button>
-                  <button
-                    className={`btn${
-                      pForm.type === "volunteer" ? " btn-p" : ""
-                    }`}
-                    style={{
-                      flexDirection: "column",
-                      padding: "14px 10px",
-                      gap: 6,
-                      height: "auto",
-                      borderColor:
-                        pForm.type === "volunteer" ? T.pink : undefined,
-                    }}
-                    onClick={() =>
-                      setPForm((f) => ({ ...f, type: "volunteer" }))
-                    }
-                  >
-                    <span style={{ fontSize: 22 }}>🤝</span>
-                    <span style={{ fontSize: 13, fontWeight: 700 }}>
-                      Volunteer
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 10,
-                        color:
-                          pForm.type === "volunteer"
-                            ? "rgba(255,255,255,.7)"
-                            : T.muted,
-                        lineHeight: 1.4,
-                      }}
-                    >
-                      Someone willing to volunteer in tasks and programs for the
-                      org
-                    </span>
-                  </button>
-                </div>
-              </div>
-              <div className="frow2">
-                <div className="ff">
-                  <label className="fl">Full name</label>
-                  <input
-                    className="fi2"
-                    value={pForm.name}
-                    onChange={setF("name")}
-                    placeholder="First Last"
-                  />
-                </div>
-                <div className="ff">
-                  <label className="fl">Phone / WhatsApp</label>
-                  <input
-                    className="fi2"
-                    value={pForm.phone}
-                    onChange={setF("phone")}
-                    placeholder="206-555-0100"
-                  />
-                </div>
-              </div>
-              <div className="frow2">
-                <div className="ff">
-                  <label className="fl">Program</label>
-                  <select
-                    className="fsel"
-                    value={pForm.program}
-                    onChange={setF("program")}
-                  >
-                    {MOCK_PROGRAMS.map((p) => (
-                      <option key={p.id}>{p.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="ff">
-                  <label className="fl">Language</label>
-                  <select
-                    className="fsel"
-                    value={pForm.language}
-                    onChange={setF("language")}
-                  >
-                    <option>English</option>
-                    <option>Spanish</option>
-                    <option>Other</option>
-                  </select>
-                </div>
-              </div>
-              <div className="frow2">
-                <div className="ff">
-                  <label className="fl">Housing status</label>
-                  <select
-                    className="fsel"
-                    value={pForm.housing}
-                    onChange={setF("housing")}
-                  >
-                    <option>Unstable</option>
-                    <option>Unhoused</option>
-                    <option>Housed</option>
-                    <option>SCP-linked</option>
-                  </select>
-                </div>
-                <div className="ff">
-                  <label className="fl">Assigned staff (ID or name)</label>
-                  <input
-                    className="fi2"
-                    value={pForm.staff}
-                    onChange={setF("staff")}
-                    placeholder="e.g. STF-004 or Lee R."
-                  />
-                </div>
-              </div>
-              <div className="ff">
-                <label className="fl">Notes</label>
-                <textarea
-                  className="ftxt"
-                  value={pForm.notes}
-                  onChange={setF("notes")}
-                  placeholder="Barriers, referral source, preferences…"
-                />
-              </div>
-              <button
-                className="btn btn-p"
-                onClick={async () => {
-                  if (!pForm.name || !pForm.phone) {
-                    toast("Name and phone required", "warn");
-                    return;
-                  }
-                  try {
-                    const token = await getToken();
-                    const res = await fetch(`${import.meta.env.VITE_API_URL}/api/participants`, {
-                      method: "POST",
-                      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        full_name: pForm.name,
-                        phone: pForm.phone,
-                        type: pForm.type,
-                        housing_status: pForm.housing,
-                        notes: pForm.notes,
-                        intake_mode: "digital",
-                        language: pForm.language || "English",
-                      })
-                    });
-                    if (!res.ok) throw new Error();
-                    toast("Participant added ✓", "success");
-                    setTab("list");
-                    loadParticipants();
-                  } catch {
-                    toast("Failed to save participant", "error");
-                  }
-                }}
-              >
-                Save participant
+                  Someone who has gone through or is enrolled in our
+                  programs
+                </span>
               </button>
-            </>
-          )}
+              <button
+                className={`btn${
+                  pForm.type === "volunteer" ? " btn-p" : ""
+                }`}
+                style={{
+                  flexDirection: "column",
+                  padding: "14px 10px",
+                  gap: 6,
+                  height: "auto",
+                  borderColor:
+                    pForm.type === "volunteer" ? T.pink : undefined,
+                }}
+                onClick={() =>
+                  setPForm((f) => ({ ...f, type: "volunteer" }))
+                }
+              >
+                <span style={{ fontSize: 22 }}>🤝</span>
+                <span style={{ fontSize: 13, fontWeight: 700 }}>
+                  Volunteer
+                </span>
+                <span
+                  style={{
+                    fontSize: 10,
+                    color:
+                      pForm.type === "volunteer"
+                        ? "rgba(255,255,255,.7)"
+                        : T.muted,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  Someone willing to volunteer in tasks and programs for the
+                  org
+                </span>
+              </button>
+            </div>
+          </div>
+          <div className="frow2">
+            <div className="ff">
+              <label className="fl">Full name</label>
+              <input
+                className="fi2"
+                value={pForm.name}
+                onChange={setF("name")}
+                placeholder="First Last"
+              />
+            </div>
+            <div className="ff">
+              <label className="fl">Phone / WhatsApp</label>
+              <input
+                className="fi2"
+                value={pForm.phone}
+                onChange={setF("phone")}
+                placeholder="206-555-0100"
+              />
+            </div>
+          </div>
+          <div className="frow2">
+            <div className="ff">
+              <label className="fl">City</label>
+              <input
+                className="fi2"
+                value={pForm.city}
+                onChange={setF("city")}
+                placeholder="e.g. Woodinville"
+              />
+            </div>
+            <div className="ff">
+              <label className="fl">Language</label>
+              <select
+                className="fsel"
+                value={pForm.language}
+                onChange={setF("language")}
+              >
+                <option>English</option>
+                <option>Spanish</option>
+                <option>Other</option>
+              </select>
+            </div>
+          </div>
+          <div className="ff">
+            <label className="fl">Notes</label>
+            <textarea
+              className="ftxt"
+              value={pForm.notes}
+              onChange={setF("notes")}
+              placeholder="Barriers, referral source, preferences…"
+            />
+          </div>
+          <button
+            className="btn btn-p"
+            onClick={async () => {
+              if (!pForm.name || !pForm.phone) {
+                toast("Name and phone required", "warn");
+                return;
+              }
+              try {
+                const token = await getToken();
+                const res = await fetch(`${import.meta.env.VITE_API_URL}/api/participants`, {
+                  method: "POST",
+                  headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    full_name: pForm.name,
+                    phone: pForm.phone,
+                    type: pForm.type,
+                    city: pForm.city,
+                    notes: pForm.notes,
+                    intake_mode: "digital",
+                    language: pForm.language || "English",
+                  })
+                });
+                if (!res.ok) throw new Error();
+                toast("Participant added ✓", "success");
+                setTab("list");
+                loadParticipants();
+              } catch {
+                toast("Failed to save participant", "error");
+              }
+            }}
+          >
+            Save participant
+          </button>
         </div>
       )}
 
     </div>
   );
 }
-// ── CRM — Job Funnel (Board view) ────────────────────────────────────────────
+
 function ShiftScheduleTab({ toast, allJobs, allUsers, loadJobs }) {
   const [editing, setEditing] = useState({}); // { [jobId]: "2026-07-08T14:00" }
 
