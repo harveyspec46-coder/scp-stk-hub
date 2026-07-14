@@ -10195,6 +10195,7 @@ function MySignatureSetup({ user, existing, onClose, onSaved, toast }) {
       onSaved && onSaved(json.data);
       onClose();
     } catch (e) {
+      console.error("Signature save failed:", e);
       toast("Failed to save signature", "error");
     } finally {
       setSaving(false);
