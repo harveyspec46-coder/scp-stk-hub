@@ -1909,6 +1909,7 @@ function Programs({ toast }) {
   const [sel, setSel] = useState(null);
   const [filter, setFilter] = useState("all");
   const [docs, setDocs] = useState([]);
+  const [pdfFile, setPdfFile] = useState(null);
   const [ledger, setLedger] = useState([]);
   const [showAddProg, setShowAddProg] = useState(false);
   const [showAddLedger, setShowAddLedger] = useState(false);
@@ -8198,6 +8199,21 @@ function OrgDocuments({ toast }) {
             </div>
           </div>
           <div className="ff">
+            <label className="fl">Upload PDF document</label>
+            <input
+              type="file"
+              accept="application/pdf"
+              className="fi2"
+              onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
+            />
+            {pdfFile && (
+              <div className="fhint">
+                {pdfFile.name} · {(pdfFile.size / 1024 / 1024).toFixed(2)} MB
+              </div>
+            )}
+          </div>
+          <PdfPageImages file={pdfFile} />
+          <div className="ff">
             <label className="fl">Document name</label>
             <input
               className="fi2"
@@ -10047,6 +10063,92 @@ function SignDocumentModal({
         </>
       )}
     </Modal>
+  );
+}
+
+// ── PDF page renderer (pdf.js) ────────────────────────────────────────────────
+import * as pdfjsLib from "pdfjs-dist";
+import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+
+function PdfPageImages({ file, onPagesRendered }) {
+  const [images, setImages] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!file) {
+      setImages([]);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    (async () => {
+      const buf = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+      const pageImages = [];
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 1.4 });
+        const canvas = document.createElement("canvas");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext("2d");
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        pageImages.push({
+          dataUrl: canvas.toDataURL("image/png"),
+          width: viewport.width,
+          height: viewport.height,
+        });
+      }
+      if (!cancelled) {
+        setImages(pageImages);
+        onPagesRendered && onPagesRendered(pageImages);
+      }
+      setLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [file]);
+
+  if (!file) return null;
+  if (loading)
+    return (
+      <div style={{ padding: 20, color: T.muted, fontSize: 12 }}>
+        Rendering PDF…
+      </div>
+    );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12, marginTop: 10 }}>
+      {images.map((img, i) => (
+        <div
+          key={i}
+          style={{
+            position: "relative",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            overflow: "hidden",
+          }}
+        >
+          <img src={img.dataUrl} alt={`Page ${i + 1}`} style={{ width: "100%", display: "block" }} />
+          <div
+            style={{
+              position: "absolute",
+              top: 6,
+              right: 6,
+              background: "rgba(0,0,0,.6)",
+              color: "#fff",
+              fontSize: 10,
+              padding: "2px 6px",
+              borderRadius: 4,
+            }}
+          >
+            Page {i + 1} / {images.length}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
