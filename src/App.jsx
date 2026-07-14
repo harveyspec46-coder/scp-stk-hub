@@ -10161,7 +10161,7 @@ function renderSignatureImage(name, fontFamily) {
   return canvas.toDataURL("image/png");
 }
 
-function MySignatureSetup({ user, existing, onClose, onSaved, toast }) {
+function MySignatureSetup({ user, existing, onClose, onSaved, toast, getToken }) {
   const [name, setName] = useState(existing?.full_name || user?.name || "");
   const [selected, setSelected] = useState(existing?.font_style || SIGNATURE_FONTS[0].key);
   const [saving, setSaving] = useState(false);
@@ -10276,6 +10276,11 @@ function ESignatures({ toast, user }) {
   const [mySignature, setMySignature] = useState(null);
   const [sigSetupOpen, setSigSetupOpen] = useState(false);
   const [sigLoading, setSigLoading] = useState(true);
+
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token;
+  };
 
   useEffect(() => {
     (async () => {
@@ -10543,6 +10548,7 @@ function ESignatures({ toast, user }) {
           onClose={() => setSigSetupOpen(false)}
           onSaved={(sig) => setMySignature(sig)}
           toast={toast}
+          getToken={getToken}
         />
       )}
 
