@@ -1909,7 +1909,6 @@ function Programs({ toast }) {
   const [sel, setSel] = useState(null);
   const [filter, setFilter] = useState("all");
   const [docs, setDocs] = useState([]);
-  const [pdfFile, setPdfFile] = useState(null);
   const [ledger, setLedger] = useState([]);
   const [showAddProg, setShowAddProg] = useState(false);
   const [showAddLedger, setShowAddLedger] = useState(false);
@@ -8199,21 +8198,6 @@ function OrgDocuments({ toast }) {
             </div>
           </div>
           <div className="ff">
-            <label className="fl">Upload PDF document</label>
-            <input
-              type="file"
-              accept="application/pdf"
-              className="fi2"
-              onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
-            />
-            {pdfFile && (
-              <div className="fhint">
-                {pdfFile.name} · {(pdfFile.size / 1024 / 1024).toFixed(2)} MB
-              </div>
-            )}
-          </div>
-          <PdfPageImages file={pdfFile} />
-          <div className="ff">
             <label className="fl">Document name</label>
             <input
               className="fi2"
@@ -10158,6 +10142,7 @@ function ESignatures({ toast, user }) {
   const [activeModal, setActiveModal] = useState(null); // { doc, mode }
   const [sendModal, setSendModal] = useState(false);
   const [docs, setDocs] = useState([]);
+  const [pdfFile, setPdfFile] = useState(null);
 
   const [newDoc, setNewDoc] = useState({
     name: "",
@@ -10308,6 +10293,21 @@ function ESignatures({ toast, user }) {
             </>
           }
         >
+          <div className="ff">
+            <label className="fl">Upload PDF document</label>
+            <input
+              type="file"
+              accept="application/pdf"
+              className="fi2"
+              onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
+            />
+            {pdfFile && (
+              <div className="fhint">
+                {pdfFile.name} · {(pdfFile.size / 1024 / 1024).toFixed(2)} MB
+              </div>
+            )}
+          </div>
+          <PdfPageImages file={pdfFile} />
           <div className="ff">
             <label className="fl">Document name</label>
             <input
