@@ -8369,18 +8369,81 @@ function OrgDocuments({ toast }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // RESOURCES — Documents and videos for staff and board
 // ═══════════════════════════════════════════════════════════════════════════════
+function getYouTubeThumbnail(url) {
+  if (!url) return null;
+  const m = url.match(/(?:youtu\.be\/|youtube\.com.*(?:\?|&)v=|youtube\.com\/embed\/|youtube\.com\/shorts\/)([\w-]{11})/);
+  return m ? `https://img.youtube.com/vi/${m[1]}/hqdefault.jpg` : null;
+}
+
 function Resources({ toast }) {
   const [tab, setTab] = useState("docs");
   const [search, setSearch] = useState("");
   const [showAdd, setShowAdd] = useState(false);
-  const [rf, setRF] = useState({
-    title: "",
-    type: "doc",
-    url: "",
-    desc: "",
-    audience: "all",
-  });
+  const [rf, setRF] = useState({ title: "", type: "doc", url: "", desc: "", audience: "all" });
+  const [uploadFile, setUploadFile] = useState(null);
   const [resources, setResources] = useState([]);
+
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token;
+  };
+
+  const loadResources = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/resources`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setResources(json.data || []);
+    } catch (e) {
+      toast("Failed to load resources", "error");
+    }
+  };
+
+  useEffect(() => {
+    loadResources();
+  }, []);
+
+  const uploadToStorage = async (file) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const path = `${session.user.id}/${Date.now()}_${file.name}`;
+    const { error } = await supabase.storage.from("Organization Document").upload(path, file);
+    if (error) throw error;
+    const { data: urlData } = supabase.storage.from("Organization Document").getPublicUrl(path);
+    return urlData.publicUrl;
+  };
+
+  const saveResource = async () => {
+    if (!rf.title) {
+      toast("Title required", "warn");
+      return;
+    }
+    try {
+      let url = rf.url;
+      if (uploadFile) {
+        url = await uploadToStorage(uploadFile);
+      }
+      if (!url) {
+        toast(rf.type === "video" ? "Add a video URL or upload a file" : "Upload a file", "warn");
+        return;
+      }
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/resources`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ type: rf.type, title: rf.title, description: rf.desc, url, audience: rf.audience }),
+      });
+      if (!res.ok) throw new Error();
+      setShowAdd(false);
+      setRF({ title: "", type: rf.type, url: "", desc: "", audience: "all" });
+      setUploadFile(null);
+      toast("Resource added ✓", "success");
+      loadResources();
+    } catch (e) {
+      toast("Failed to add resource", "error");
+    }
+  };
 
   const shown = resources.filter(
     (r) =>
@@ -8393,41 +8456,13 @@ function Resources({ toast }) {
       {showAdd && (
         <Modal
           title={`Add ${rf.type === "doc" ? "document" : "video"}`}
-          onClose={() => setShowAdd(false)}
+          onClose={() => { setShowAdd(false); setUploadFile(null); }}
           footer={
             <>
-              <button className="btn" onClick={() => setShowAdd(false)}>
+              <button className="btn" onClick={() => { setShowAdd(false); setUploadFile(null); }}>
                 Cancel
               </button>
-              <button
-                className="btn btn-p"
-                onClick={() => {
-                  if (!rf.title) {
-                    toast("Title required", "warn");
-                    return;
-                  }
-                  setResources((p) => [
-                    ...p,
-                    {
-                      id: "r" + Date.now(),
-                      ...rf,
-                      date: "Today",
-                      uploadedBy: "ADM-001",
-                      fileType: "pdf",
-                      thumbnail: "📄",
-                    },
-                  ]);
-                  setShowAdd(false);
-                  setRF({
-                    title: "",
-                    type: rf.type,
-                    url: "",
-                    desc: "",
-                    audience: "all",
-                  });
-                  toast("Resource added ✓", "success");
-                }}
-              >
+              <button className="btn btn-p" onClick={saveResource}>
                 Add resource
               </button>
             </>
@@ -8438,7 +8473,7 @@ function Resources({ toast }) {
               <button
                 key={tp}
                 className={`btn${rf.type === tp ? " btn-p" : ""}`}
-                onClick={() => setRF((f) => ({ ...f, type: tp }))}
+                onClick={() => { setRF((f) => ({ ...f, type: tp })); setUploadFile(null); }}
               >
                 {tp === "doc" ? "📄 Document" : "🎥 Video"}
               </button>
@@ -8463,37 +8498,39 @@ function Resources({ toast }) {
               style={{ minHeight: 60 }}
             />
           </div>
-          {rf.type === "video" ? (
+          {rf.type === "video" && (
             <div className="ff">
-              <label className="fl">
-                Video URL (YouTube, Vimeo, or upload)
-              </label>
+              <label className="fl">Video URL (YouTube, Vimeo)</label>
               <input
                 className="fi2"
                 value={rf.url}
                 onChange={(e) => setRF((f) => ({ ...f, url: e.target.value }))}
                 placeholder="https://youtube.com/watch?v=…"
+                disabled={!!uploadFile}
               />
             </div>
-          ) : (
-            <div
-              className="upload-zone"
-              onClick={() => toast("File picker — Supabase Storage")}
-            >
+          )}
+          <div className="ff">
+            <label className="fl">{rf.type === "video" ? "Or upload a video file" : "Upload file"}</label>
+            <label className="upload-zone" style={{ cursor: "pointer", display: "block" }}>
+              <input
+                type="file"
+                accept={rf.type === "video" ? "video/*" : undefined}
+                style={{ display: "none" }}
+                onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+              />
               <div style={{ fontSize: 22 }}>📎</div>
               <div style={{ fontSize: 12, color: T.text, marginTop: 5 }}>
-                Click to upload file
+                {uploadFile ? uploadFile.name : "Click to upload file"}
               </div>
-            </div>
-          )}
+            </label>
+          </div>
           <div className="ff">
             <label className="fl">Audience</label>
             <select
               className="fsel"
               value={rf.audience}
-              onChange={(e) =>
-                setRF((f) => ({ ...f, audience: e.target.value }))
-              }
+              onChange={(e) => setRF((f) => ({ ...f, audience: e.target.value }))}
             >
               <option value="all">All staff and board</option>
               <option value="staff">Staff only</option>
@@ -8503,19 +8540,10 @@ function Resources({ toast }) {
         </Modal>
       )}
 
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          marginBottom: 14,
-        }}
-      >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
         <div>
           <div className="page-title">Resources</div>
-          <div className="page-sub">
-            Documents and training videos for staff and board members
-          </div>
+          <div className="page-sub">Documents and training videos for staff and board members</div>
         </div>
         <button className="btn btn-p" onClick={() => setShowAdd(true)}>
           + Add resource
@@ -8524,23 +8552,11 @@ function Resources({ toast }) {
 
       <div className="tabs">
         {[
-          [
-            "docs",
-            "Documents",
-            resources.filter((r) => r.type === "doc").length,
-          ],
-          [
-            "videos",
-            "Videos",
-            resources.filter((r) => r.type === "video").length,
-          ],
+          ["docs", "Documents", resources.filter((r) => r.type === "doc").length],
+          ["videos", "Videos", resources.filter((r) => r.type === "video").length],
         ].map(([k, l, n]) => (
-          <button
-            key={k}
-            className={`tab${tab === k ? " on" : ""}`}
-            onClick={() => setTab(k)}
-          >
-            {l === "Documents" ? "📄" : l === "Videos" ? "🎥" : ""} {l}
+          <button key={k} className={`tab${tab === k ? " on" : ""}`} onClick={() => setTab(k)}>
+            {l === "Documents" ? "📄" : "🎥"} {l}
             <span className="tab-n">{n}</span>
           </button>
         ))}
@@ -8559,225 +8575,225 @@ function Resources({ toast }) {
       {tab === "docs" && (
         <div className="g2">
           {shown.map((r) => (
-            <div
+              <a
               key={r.id}
+              href={r.url}
+              target="_blank"
+              rel="noreferrer"
               className="card card-hover"
-              onClick={() => toast("Opening: " + r.title)}
+              style={{ textDecoration: "none", display: "block" }}
             >
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: 10,
-                  marginBottom: 8,
-                }}
-              >
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 8 }}>
                 <div
                   style={{
-                    width: 36,
-                    height: 44,
-                    borderRadius: 6,
-                    background: "rgba(244,63,94,.12)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 20,
-                    flexShrink: 0,
+                    width: 36, height: 44, borderRadius: 6, background: "rgba(244,63,94,.12)",
+                    display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0,
                   }}
                 >
                   📄
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 600,
-                      color: T.white,
-                      marginBottom: 2,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
+                  <div style={{ fontSize: 13, fontWeight: 600, color: T.white, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {r.title}
                   </div>
-                  <div
-                    style={{ fontSize: 11, color: T.muted, lineHeight: 1.4 }}
-                  >
-                    {r.desc}
-                  </div>
+                  <div style={{ fontSize: 11, color: T.muted, lineHeight: 1.4 }}>{r.description}</div>
                 </div>
               </div>
               <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                <span className="badge b-gr">{r.fileType?.toUpperCase()}</span>
                 <span
-                  className={`badge${
-                    r.audience === "all"
-                      ? " b-b"
-                      : r.audience === "staff"
-                      ? " b-a"
-                      : " b-v"
-                  }`}
+                  className={`badge${r.audience === "all" ? " b-b" : r.audience === "staff" ? " b-a" : " b-v"}`}
                 >
                   {r.audience === "all" ? "All" : r.audience}
                 </span>
-                <span
-                  style={{
-                    fontSize: 10,
-                    color: T.muted,
-                    marginLeft: "auto",
-                    alignSelf: "center",
-                  }}
-                >
-                  {r.date}
+                <span style={{ fontSize: 10, color: T.muted, marginLeft: "auto", alignSelf: "center" }}>
+                  {new Date(r.created_at).toLocaleDateString()}
                 </span>
               </div>
-            </div>
+            </a>
           ))}
+          {!shown.length && (
+            <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "30px 0", color: T.muted }}>
+              No documents yet
+            </div>
+          )}
         </div>
       )}
 
       {tab === "videos" && (
         <div className="g3">
-          {shown.map((r) => (
-            <div
-              key={r.id}
-              className="card card-hover"
-              onClick={() => toast("Playing: " + r.title)}
-            >
-              <div
-                style={{
-                  width: "100%",
-                  height: 110,
-                  background: "var(--dk)",
-                  borderRadius: "var(--r)",
-                  marginBottom: 10,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 40,
-                  border: "1px solid var(--border)",
-                  position: "relative",
-                  overflow: "hidden",
-                }}
+          {shown.map((r) => {
+            const thumb = getYouTubeThumbnail(r.url);
+            return (
+                <a
+                key={r.id}
+                href={r.url}
+                target="_blank"
+                rel="noreferrer"
+                className="card card-hover"
+                style={{ textDecoration: "none", display: "block" }}
               >
-                {r.thumbnail}
                 <div
                   style={{
-                    position: "absolute",
-                    inset: 0,
-                    background: "rgba(0,0,0,.4)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
+                    width: "100%", height: 110, background: "var(--dk)", borderRadius: "var(--r)",
+                    marginBottom: 10, display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 40, border: "1px solid var(--border)", position: "relative", overflow: "hidden",
                   }}
                 >
+                  {thumb ? (
+                    <img src={thumb} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  ) : (
+                    "🎥"
+                  )}
                   <div
                     style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: "50%",
-                      background: "rgba(242,7,133,.85)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: 14,
+                      position: "absolute", inset: 0, background: "rgba(0,0,0,.4)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
                     }}
                   >
-                    ▶
+                    <div
+                      style={{
+                        width: 36, height: 36, borderRadius: "50%", background: "rgba(242,7,133,.85)",
+                        display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14,
+                      }}
+                    >
+                      ▶
+                    </div>
                   </div>
                 </div>
-                <div
-                  style={{
-                    position: "absolute",
-                    bottom: 6,
-                    right: 8,
-                    background: "rgba(0,0,0,.7)",
-                    borderRadius: 4,
-                    padding: "2px 6px",
-                    fontSize: 10,
-                    color: "#fff",
-                  }}
-                >
-                  {r.duration}
+                <div style={{ fontSize: 13, fontWeight: 600, color: T.white, marginBottom: 4, lineHeight: 1.3 }}>
+                  {r.title}
                 </div>
-              </div>
-              <div
-                style={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: T.white,
-                  marginBottom: 4,
-                  lineHeight: 1.3,
-                }}
-              >
-                {r.title}
-              </div>
-              <div
-                style={{
-                  fontSize: 11,
-                  color: T.muted,
-                  marginBottom: 8,
-                  lineHeight: 1.4,
-                }}
-              >
-                {r.desc}
-              </div>
-              <div style={{ display: "flex", gap: 5 }}>
-                <span
-                  className={`badge${
-                    r.audience === "all"
-                      ? " b-b"
-                      : r.audience === "staff"
-                      ? " b-a"
-                      : " b-v"
-                  }`}
-                >
-                  {r.audience === "all" ? "All" : r.audience}
-                </span>
-                <span
-                  style={{
-                    fontSize: 10,
-                    color: T.muted,
-                    marginLeft: "auto",
-                    alignSelf: "center",
-                  }}
-                >
-                  {r.date}
-                </span>
-              </div>
+                <div style={{ fontSize: 11, color: T.muted, marginBottom: 8, lineHeight: 1.4 }}>
+                  {r.description}
+                </div>
+                <div style={{ display: "flex", gap: 5 }}>
+                  <span className={`badge${r.audience === "all" ? " b-b" : r.audience === "staff" ? " b-a" : " b-v"}`}>
+                    {r.audience === "all" ? "All" : r.audience}
+                  </span>
+                  <span style={{ fontSize: 10, color: T.muted, marginLeft: "auto", alignSelf: "center" }}>
+                    {new Date(r.created_at).toLocaleDateString()}
+                  </span>
+                </div>
+              </a>
+            );
+          })}
+          {!shown.length && (
+            <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "30px 0", color: T.muted }}>
+              No videos yet
             </div>
-          ))}
+          )}
         </div>
       )}
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// WORKSHOPS — Virtual workshops library
-// ═══════════════════════════════════════════════════════════════════════════════
 function Workshops({ toast }) {
   const [tab, setTab] = useState("upcoming");
   const [showAdd, setShowAdd] = useState(false);
+  const [recordModal, setRecordModal] = useState(null);
+  const [recordUrl, setRecordUrl] = useState("");
+  const [recordFile, setRecordFile] = useState(null);
   const [wf, setWF] = useState({
-    title: "",
-    facilitator: "",
-    date: "",
-    time: "",
-    platform: "Zoom",
-    link: "",
-    desc: "",
-    audience: "all",
-    recording: "",
+    title: "", facilitator: "", date: "", time: "",
+    platform: "Zoom", link: "", desc: "", audience: "all",
   });
   const [workshops, setWorkshops] = useState([]);
 
-  const shown = workshops.filter(
-    (w) => w.status === (tab === "upcoming" ? "upcoming" : "completed")
-  );
-  const platformIcon = (p) =>
-    ({ Zoom: "🎥", Teams: "💙", Meet: "🟢" }[p] || "💻");
+  const getToken = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token;
+  };
+
+  const loadWorkshops = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/workshops`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setWorkshops(json.data || []);
+    } catch (e) {
+      toast("Failed to load workshops", "error");
+    }
+  };
+
+  useEffect(() => {
+    loadWorkshops();
+  }, []);
+
+  const uploadToStorage = async (file) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const path = `${session.user.id}/${Date.now()}_${file.name}`;
+    const { error } = await supabase.storage.from("Organization Document").upload(path, file);
+    if (error) throw error;
+    const { data: urlData } = supabase.storage.from("Organization Document").getPublicUrl(path);
+    return urlData.publicUrl;
+  };
+
+  const saveWorkshop = async () => {
+    if (!wf.title || !wf.date) {
+      toast("Title and date required", "warn");
+      return;
+    }
+    try {
+      const scheduledAt = wf.time
+        ? new Date(`${wf.date}T${wf.time}`).toISOString()
+        : new Date(`${wf.date}T00:00`).toISOString();
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/workshops`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: wf.title,
+          facilitator: wf.facilitator,
+          scheduled_at: scheduledAt,
+          platform: wf.platform,
+          meeting_link: wf.link,
+          description: wf.desc,
+          audience: wf.audience,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      setShowAdd(false);
+      setWF({ title: "", facilitator: "", date: "", time: "", platform: "Zoom", link: "", desc: "", audience: "all" });
+      toast("Workshop added ✓", "success");
+      loadWorkshops();
+    } catch (e) {
+      toast("Failed to add workshop", "error");
+    }
+  };
+
+  const saveRecording = async () => {
+    if (!recordModal) return;
+    try {
+      let url = recordUrl;
+      if (recordFile) {
+        url = await uploadToStorage(recordFile);
+      }
+      if (!url) {
+        toast("Paste a link or upload a file", "warn");
+        return;
+      }
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/workshops/${recordModal.id}/recording`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ recording_url: url }),
+      });
+      if (!res.ok) throw new Error();
+      toast("Recording saved ✓", "success");
+      setRecordModal(null);
+      setRecordUrl("");
+      setRecordFile(null);
+      loadWorkshops();
+    } catch (e) {
+      toast("Failed to save recording", "error");
+    }
+  };
+
+  const shown = workshops.filter((w) => w.status === (tab === "upcoming" ? "upcoming" : "completed"));
+  const platformIcon = (p) => ({ Zoom: "🎥", Teams: "💙", Meet: "🟢" }[p] || "💻");
 
   return (
     <div>
@@ -8790,37 +8806,7 @@ function Workshops({ toast }) {
               <button className="btn" onClick={() => setShowAdd(false)}>
                 Cancel
               </button>
-              <button
-                className="btn btn-p"
-                onClick={() => {
-                  if (!wf.title || !wf.date) {
-                    toast("Title and date required", "warn");
-                    return;
-                  }
-                  setWorkshops((p) => [
-                    ...p,
-                    {
-                      id: "w" + Date.now(),
-                      ...wf,
-                      status: "upcoming",
-                      attendees: 0,
-                    },
-                  ]);
-                  setShowAdd(false);
-                  setWF({
-                    title: "",
-                    facilitator: "",
-                    date: "",
-                    time: "",
-                    platform: "Zoom",
-                    link: "",
-                    desc: "",
-                    audience: "all",
-                    recording: "",
-                  });
-                  toast("Workshop added ✓", "success");
-                }}
-              >
+              <button className="btn btn-p" onClick={saveWorkshop}>
                 Save workshop
               </button>
             </>
@@ -8841,9 +8827,7 @@ function Workshops({ toast }) {
               <input
                 className="fi2"
                 value={wf.facilitator}
-                onChange={(e) =>
-                  setWF((f) => ({ ...f, facilitator: e.target.value }))
-                }
+                onChange={(e) => setWF((f) => ({ ...f, facilitator: e.target.value }))}
                 placeholder="Name or organization"
               />
             </div>
@@ -8852,9 +8836,7 @@ function Workshops({ toast }) {
               <select
                 className="fsel"
                 value={wf.platform}
-                onChange={(e) =>
-                  setWF((f) => ({ ...f, platform: e.target.value }))
-                }
+                onChange={(e) => setWF((f) => ({ ...f, platform: e.target.value }))}
               >
                 {["Zoom", "Teams", "Google Meet", "Other"].map((p) => (
                   <option key={p}>{p}</option>
@@ -8876,9 +8858,9 @@ function Workshops({ toast }) {
               <label className="fl">Time</label>
               <input
                 className="fi2"
+                type="time"
                 value={wf.time}
                 onChange={(e) => setWF((f) => ({ ...f, time: e.target.value }))}
-                placeholder="2:00 PM PST"
               />
             </div>
           </div>
@@ -8906,9 +8888,7 @@ function Workshops({ toast }) {
             <select
               className="fsel"
               value={wf.audience}
-              onChange={(e) =>
-                setWF((f) => ({ ...f, audience: e.target.value }))
-              }
+              onChange={(e) => setWF((f) => ({ ...f, audience: e.target.value }))}
             >
               <option value="all">All staff and board</option>
               <option value="staff">Staff only</option>
@@ -8918,19 +8898,54 @@ function Workshops({ toast }) {
         </Modal>
       )}
 
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-          marginBottom: 14,
-        }}
-      >
+      {recordModal && (
+        <Modal
+          title="Add recording"
+          sub={recordModal.title}
+          onClose={() => { setRecordModal(null); setRecordUrl(""); setRecordFile(null); }}
+          footer={
+            <>
+              <button className="btn" onClick={() => { setRecordModal(null); setRecordUrl(""); setRecordFile(null); }}>
+                Cancel
+              </button>
+              <button className="btn btn-p" onClick={saveRecording}>
+                Save recording
+              </button>
+            </>
+          }
+        >
+          <div className="ff">
+            <label className="fl">Recording URL (YouTube, Vimeo)</label>
+            <input
+              className="fi2"
+              value={recordUrl}
+              onChange={(e) => setRecordUrl(e.target.value)}
+              placeholder="https://youtube.com/watch?v=…"
+              disabled={!!recordFile}
+            />
+          </div>
+          <div className="ff">
+            <label className="fl">Or upload a video file</label>
+            <label className="upload-zone" style={{ cursor: "pointer", display: "block" }}>
+              <input
+                type="file"
+                accept="video/*"
+                style={{ display: "none" }}
+                onChange={(e) => setRecordFile(e.target.files?.[0] || null)}
+              />
+              <div style={{ fontSize: 22 }}>📎</div>
+              <div style={{ fontSize: 12, color: T.text, marginTop: 5 }}>
+                {recordFile ? recordFile.name : "Click to upload file"}
+              </div>
+            </label>
+          </div>
+        </Modal>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
         <div>
           <div className="page-title">Workshops</div>
-          <div className="page-sub">
-            Virtual workshops · Upcoming sessions and recorded library
-          </div>
+          <div className="page-sub">Virtual workshops · Upcoming sessions and recorded library</div>
         </div>
         <button className="btn btn-p" onClick={() => setShowAdd(true)}>
           + Add workshop
@@ -8939,22 +8954,10 @@ function Workshops({ toast }) {
 
       <div className="tabs">
         {[
-          [
-            "upcoming",
-            "Upcoming",
-            workshops.filter((w) => w.status === "upcoming").length,
-          ],
-          [
-            "completed",
-            "Recordings",
-            workshops.filter((w) => w.status === "completed").length,
-          ],
+          ["upcoming", "Upcoming", workshops.filter((w) => w.status === "upcoming").length],
+          ["completed", "Recordings", workshops.filter((w) => w.status === "completed").length],
         ].map(([k, l, n]) => (
-          <button
-            key={k}
-            className={`tab${tab === k ? " on" : ""}`}
-            onClick={() => setTab(k)}
-          >
+          <button key={k} className={`tab${tab === k ? " on" : ""}`} onClick={() => setTab(k)}>
             {l}
             <span className="tab-n">{n}</span>
           </button>
@@ -8962,148 +8965,100 @@ function Workshops({ toast }) {
       </div>
 
       <div className="g2">
-        {shown.map((w) => (
-          <div
-            key={w.id}
-            className="card card-hover"
-            onClick={() =>
-              w.link
-                ? toast("Opening: " + w.link)
-                : toast("Workshop: " + w.title)
-            }
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "flex-start",
-                justifyContent: "space-between",
-                gap: 10,
-                marginBottom: 8,
-              }}
-            >
-              <div style={{ flex: 1 }}>
-                <div
-                  style={{
-                    fontSize: 14,
-                    fontWeight: 700,
-                    color: T.white,
-                    marginBottom: 4,
-                    lineHeight: 1.3,
-                  }}
-                >
-                  {w.title}
-                </div>
-                <div style={{ fontSize: 11, color: T.muted, marginBottom: 6 }}>
-                  👤 {w.facilitator} · {platformIcon(w.platform)} {w.platform}
-                </div>
-                <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                  <span className="badge b-a" style={{ fontSize: 10 }}>
-                    📅 {w.date}
-                  </span>
-                  {w.time && (
-                    <span className="badge b-gr" style={{ fontSize: 10 }}>
-                      🕐 {w.time}
+        {shown.map((w) => {
+          const thumb = getYouTubeThumbnail(w.recording_url);
+          return (
+            <div key={w.id} className="card card-hover">
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: T.white, marginBottom: 4, lineHeight: 1.3 }}>
+                    {w.title}
+                  </div>
+                  <div style={{ fontSize: 11, color: T.muted, marginBottom: 6 }}>
+                    👤 {w.facilitator} · {platformIcon(w.platform)} {w.platform}
+                  </div>
+                  <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+                    {w.scheduled_at && (
+                      <span className="badge b-a" style={{ fontSize: 10 }}>
+                        📅 {new Date(w.scheduled_at).toLocaleString()}
+                      </span>
+                    )}
+                    <span className={`badge${w.audience === "all" ? " b-b" : w.audience === "staff" ? " b-a" : " b-v"}`} style={{ fontSize: 10 }}>
+                      {w.audience === "all" ? "All" : w.audience}
                     </span>
+                  </div>
+                </div>
+                <div style={{ textAlign: "center", flexShrink: 0 }}>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: T.pink }}>{w.attendee_count || 0}</div>
+                  <div style={{ fontSize: 9, color: T.muted }}>attendees</div>
+                </div>
+              </div>
+              <div style={{ fontSize: 11, color: T.muted, lineHeight: 1.5, marginBottom: 10 }}>
+                {w.description}
+              </div>
+              {w.recording_url && (
+                  <a
+                  href={w.recording_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{
+                    display: "block", width: "100%", height: 100, background: "var(--dk)", borderRadius: "var(--r)",
+                    marginBottom: 10, position: "relative", overflow: "hidden", border: "1px solid var(--border)",
+                  }}
+                >
+                  {thumb ? (
+                    <img src={thumb} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  ) : (
+                    <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>🎥</div>
                   )}
-                  <span
-                    className={`badge${
-                      w.audience === "all"
-                        ? " b-b"
-                        : w.audience === "staff"
-                        ? " b-a"
-                        : " b-v"
-                    }`}
-                    style={{ fontSize: 10 }}
+                  <div
+                    style={{
+                      position: "absolute", inset: 0, background: "rgba(0,0,0,.35)",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}
                   >
-                    {w.audience === "all" ? "All" : w.audience}
-                  </span>
-                </div>
+                    <div
+                      style={{
+                        width: 32, height: 32, borderRadius: "50%", background: "rgba(242,7,133,.85)",
+                        display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13,
+                      }}
+                    >
+                      ▶
+                    </div>
+                  </div>
+                </a>
+              )}
+              <div style={{ display: "flex", gap: 7 }}>
+                {w.status === "upcoming" && w.meeting_link && (
+                    <a
+                    href={w.meeting_link}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn btn-sm btn-p"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    Join meeting →
+                  </a>
+                )}
+                {w.status === "completed" && !w.recording_url && (
+                  <button
+                    className="btn btn-sm"
+                    onClick={() => setRecordModal(w)}
+                  >
+                    + Add recording
+                  </button>
+                )}
               </div>
-              <div style={{ textAlign: "center", flexShrink: 0 }}>
-                <div style={{ fontSize: 20, fontWeight: 700, color: T.pink }}>
-                  {w.attendees}
-                </div>
-                <div style={{ fontSize: 9, color: T.muted }}>attendees</div>
-              </div>
             </div>
-            <div
-              style={{
-                fontSize: 11,
-                color: T.muted,
-                lineHeight: 1.5,
-                marginBottom: 10,
-              }}
-            >
-              {w.desc}
-            </div>
-            <div style={{ display: "flex", gap: 7 }}>
-              {w.status === "upcoming" && w.link && (
-                <button
-                  className="btn btn-sm btn-p"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toast("Opening meeting link ✓", "success");
-                  }}
-                >
-                  Join meeting →
-                </button>
-              )}
-              {w.status === "upcoming" && (
-                <button
-                  className="btn btn-sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toast("Reminder set ✓", "success");
-                  }}
-                >
-                  🔔 Remind me
-                </button>
-              )}
-              {w.recording && (
-                <button
-                  className="btn btn-sm btn-g"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toast("Opening recording ✓", "success");
-                  }}
-                >
-                  ▶ Watch recording
-                </button>
-              )}
-              {w.status === "completed" && !w.recording && (
-                <button
-                  className="btn btn-sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toast("Paste recording link to save ✓", "success");
-                  }}
-                >
-                  + Add recording link
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
+          );
+        })}
         {shown.length === 0 && (
-          <div
-            style={{
-              gridColumn: "1/-1",
-              textAlign: "center",
-              padding: "40px 20px",
-              color: T.muted,
-            }}
-          >
-            <div style={{ fontSize: 32, marginBottom: 10 }}>
-              {tab === "upcoming" ? "📅" : "🎥"}
-            </div>
+          <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "40px 20px", color: T.muted }}>
+            <div style={{ fontSize: 32, marginBottom: 10 }}>{tab === "upcoming" ? "📅" : "🎥"}</div>
             <div style={{ fontSize: 14, color: T.text, marginBottom: 6 }}>
-              {tab === "upcoming"
-                ? "No upcoming workshops"
-                : "No recordings yet"}
+              {tab === "upcoming" ? "No upcoming workshops" : "No recordings yet"}
             </div>
-            <div style={{ fontSize: 12 }}>
-              Use the "+ Add workshop" button above to schedule one.
-            </div>
+            <div style={{ fontSize: 12 }}>Use the "+ Add workshop" button above to schedule one.</div>
           </div>
         )}
       </div>
@@ -9111,9 +9066,6 @@ function Workshops({ toast }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// AUDIT LOG — Append-only log of all state changes
-// ═══════════════════════════════════════════════════════════════════════════════
 function AuditLog({ toast, user }) {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
