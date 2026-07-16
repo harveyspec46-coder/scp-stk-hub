@@ -10372,6 +10372,7 @@ function ESignatures({ toast, user }) {
       setPlacementDoc(json.data);
       toast("Document created — place signature fields next", "success");
     } catch (e) {
+      console.error("Create document failed:", e);
       toast("Failed to create document", "error");
     } finally {
       setCreating(false);
