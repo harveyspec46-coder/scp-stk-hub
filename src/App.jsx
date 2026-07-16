@@ -10299,6 +10299,85 @@ function ESignatures({ toast, user }) {
     })();
   }, []);
 
+  const [allUsers, setAllUsers] = useState([]);
+  const [selectedSignerIds, setSelectedSignerIds] = useState([]);
+  const [placementDoc, setPlacementDoc] = useState(null); // created doc + signers, opens placement screen
+  const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const token = await getToken();
+        const res = await fetch(`${import.meta.env.VITE_API_URL}/api/admin/users`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const json = await res.json();
+        setAllUsers(json.data || []);
+      } catch (e) {
+        /* silent — signer multi-select just stays empty */
+      }
+    })();
+  }, []);
+
+  const boardUsers = allUsers.filter((u) => u.role === "admin" || u.role === "manager");
+
+  const toggleSigner = (id) => {
+    setSelectedSignerIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
+
+  const createDocument = async () => {
+    if (!newDoc.name) {
+      toast("Document name required", "warn");
+      return;
+    }
+    if (!pdfFile) {
+      toast("Upload a PDF document", "warn");
+      return;
+    }
+    if (selectedSignerIds.length === 0) {
+      toast("Select at least one signer", "warn");
+      return;
+    }
+    setCreating(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const path = `${session.user.id}/${Date.now()}_${pdfFile.name}`;
+      const { error: uploadError } = await supabase.storage.from("esign-documents").upload(path, pdfFile);
+      if (uploadError) throw uploadError;
+      const { data: urlData } = supabase.storage.from("esign-documents").getPublicUrl(path);
+
+      const signers = selectedSignerIds.map((id) => {
+        const u = boardUsers.find((x) => x.id === id);
+        return { name: u.full_name, email: u.email, role: u.role };
+      });
+
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/esign/documents`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          name: newDoc.name,
+          type: newDoc.type,
+          clauses: [],
+          source_file_url: urlData.publicUrl,
+          signers,
+        }),
+      });
+      if (!res.ok) throw new Error("Create failed");
+      const json = await res.json();
+
+      setSendModal(false);
+      setPlacementDoc(json.data);
+      toast("Document created — place signature fields next", "success");
+    } catch (e) {
+      toast("Failed to create document", "error");
+    } finally {
+      setCreating(false);
+    }
+  };
+
   const [newDoc, setNewDoc] = useState({
     name: "",
     type: "participant",
@@ -10389,61 +10468,10 @@ function ESignatures({ toast, user }) {
               </button>
               <button
                 className="btn btn-p"
-                onClick={() => {
-                  if (!newDoc.name) {
-                    toast("Document name required", "warn");
-                    return;
-                  }
-                  const signerList = newDoc.signerNames
-                    .split(",")
-                    .map((s) => s.trim())
-                    .filter(Boolean);
-                  setDocs((prev) => [
-                    {
-                      id: "DOC-00" + (prev.length + 1),
-                      name: newDoc.name,
-                      type: newDoc.type,
-                      pages: 2,
-                      clauses: [
-                        "This document has been prepared for electronic signature.",
-                        "By signing, all parties agree to the terms as discussed and communicated in writing.",
-                      ],
-                      signers: signerList.length
-                        ? signerList.map((n, i) => ({
-                            name: n,
-                            role: "staff",
-                            uid: "STF-00" + (i + 1),
-                            signed: false,
-                            signedAt: null,
-                            sigData: null,
-                          }))
-                        : [
-                            {
-                              name: user?.name || "You",
-                              role: user?.role || "admin",
-                              uid: user?.uid || "ADM-001",
-                              signed: false,
-                              signedAt: null,
-                              sigData: null,
-                            },
-                          ],
-                      createdBy: user?.uid || "ADM-001",
-                      createdAt: "Today",
-                      status: "pending",
-                    },
-                    ...prev,
-                  ]);
-                  setSendModal(false);
-                  setNewDoc({
-                    name: "",
-                    type: "participant",
-                    signerNames: "",
-                    message: "",
-                  });
-                  toast("Document sent for signatures ✓", "success");
-                }}
+                onClick={createDocument}
+                disabled={creating}
               >
-                Send for signatures
+                {creating ? "Creating…" : "Continue to placement →"}
               </button>
             </>
           }
@@ -10488,17 +10516,37 @@ function ESignatures({ toast, user }) {
             </div>
           </div>
           <div className="ff">
-            <label className="fl">
-              Signers (names or IDs, comma-separated)
-            </label>
-            <input
-              className="fi2"
-              value={newDoc.signerNames}
-              onChange={setND("signerNames")}
-              placeholder="e.g. Kezia M., MGR-001, STF-003"
-            />
-            <div className="fhint">
-              Leave blank to add yourself as the only signer
+            <label className="fl">Signers</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 4 }}>
+              {boardUsers.map((u) => {
+                const checked = selectedSignerIds.includes(u.id);
+                return (
+                  <div
+                    key={u.id}
+                    onClick={() => toggleSigner(u.id)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "8px 10px",
+                      borderRadius: 6,
+                      border: `1px solid ${checked ? "#f20785" : "var(--border)"}`,
+                      background: checked ? "rgba(242,7,133,.06)" : "transparent",
+                      cursor: "pointer",
+                      fontSize: 12,
+                    }}
+                  >
+                    <span>{checked ? "✓" : "○"}</span>
+                    <span>{u.full_name}</span>
+                    <span style={{ color: T.muted, marginLeft: "auto" }}>
+                      {u.role === "admin" ? "Admin" : "Manager"}
+                    </span>
+                  </div>
+                );
+              })}
+              {boardUsers.length === 0 && (
+                <div className="fhint">No admins or managers found</div>
+              )}
             </div>
           </div>
           <div className="ff">
@@ -10540,6 +10588,37 @@ function ESignatures({ toast, user }) {
           + Send for signature
         </button>
       </div>
+
+      {placementDoc && (
+        <Modal
+          title="Place signature fields"
+          sub={placementDoc.name}
+          onClose={() => setPlacementDoc(null)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setPlacementDoc(null)}>
+                Close (finish later)
+              </button>
+            </>
+          }
+        >
+          <div style={{ fontSize: 12, color: T.muted, marginBottom: 10 }}>
+            Document created with {(placementDoc.signers || []).length} signer
+            {(placementDoc.signers || []).length !== 1 ? "s" : ""}:
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 }}>
+            {(placementDoc.signers || []).map((s) => (
+              <div key={s.id} style={{ fontSize: 12, color: T.text }}>
+                • {s.name} ({s.role})
+              </div>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: T.muted }}>
+            Drag-and-drop field placement is coming next — this document is
+            saved and will appear in your document list.
+          </div>
+        </Modal>
+      )}
 
       {sigSetupOpen && (
         <MySignatureSetup
