@@ -10319,6 +10319,24 @@ function ESignatures({ toast, user }) {
     })();
   }, []);
 
+  const loadDocuments = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/esign/documents`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json();
+      setDocs(json.data || []);
+    } catch (e) {
+      console.error("Failed to load esign documents:", e);
+      toast("Failed to load documents", "error");
+    }
+  };
+
+  useEffect(() => {
+    loadDocuments();
+  }, []);
+
   const boardUsers = allUsers.filter((u) => u.role === "admin" || u.role === "manager");
 
   const toggleSigner = (id) => {
@@ -10371,6 +10389,7 @@ function ESignatures({ toast, user }) {
       setSendModal(false);
       setPlacementDoc(json.data);
       toast("Document created — place signature fields next", "success");
+      loadDocuments();
     } catch (e) {
       console.error("Create document failed:", e);
       toast("Failed to create document", "error");
