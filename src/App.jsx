@@ -10627,9 +10627,21 @@ function SignerFillScreen({ doc, user, mySignature, onClose, onSigned, toast, ge
   const allFilled = fields.length > 0 && fields.every((f) => f.filled);
 
   useEffect(() => {
-    if (step === "fill" && allFilled) {
-      setStep("done");
-      onSigned && onSigned();
+    if (step === "fill" && allFilled && mySigner) {
+      (async () => {
+        try {
+          const token = await getToken();
+          await fetch(
+            `${import.meta.env.VITE_API_URL}/api/esign/documents/${doc.id}/signers/${mySigner.id}/finalize`,
+            { method: "POST", headers: { Authorization: `Bearer ${token}` } }
+          );
+        } catch (e) {
+          console.error("Finalize failed:", e);
+        } finally {
+          setStep("done");
+          onSigned && onSigned();
+        }
+      })();
     }
   }, [allFilled, step]);
 
