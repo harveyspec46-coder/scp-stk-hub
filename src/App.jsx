@@ -10574,7 +10574,7 @@ function SignerFillScreen({ doc, user, mySignature, onClose, onSigned, toast, ge
     let cancelled = false;
     (async () => {
       try {
-        const pdf = await pdfjsLib.getDocument(doc.source_file_url).promise;
+        const pdf = await pdfjsLib.getDocument({ url: doc.source_file_url }).promise;
         const out = [];
         for (let i = 1; i <= pdf.numPages; i++) {
           const page = await pdf.getPage(i);
