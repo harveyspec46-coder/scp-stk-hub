@@ -10051,8 +10051,8 @@ function SignDocumentModal({
 }
 
 // ── PDF page renderer (pdf.js) ────────────────────────────────────────────────
-import * as pdfjsLib from "pdfjs-dist";
-import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+import pdfjsWorker from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 import { Rnd } from "react-rnd";
 
