@@ -10983,7 +10983,7 @@ function ESignatures({ toast, user }) {
 
       const signers = selectedSignerIds.map((id) => {
         const u = boardUsers.find((x) => x.id === id);
-        return { name: u.full_name, email: u.email, role: u.role };
+        return { name: u.full_name, email: u.email, role: u.role, user_id: u.id };
       });
 
       const token = await getToken();
