@@ -10287,24 +10287,28 @@ function FieldPlacementScreen({ doc, pdfFile, onClose, onSaved, toast, getToken 
     }
     let cancelled = false;
     (async () => {
-      const buf = await pdfFile.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-      const out = [];
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const unscaled = page.getViewport({ scale: 1 });
-        const scale = PLACEMENT_PAGE_WIDTH / unscaled.width;
-        const viewport = page.getViewport({ scale });
-        const canvas = document.createElement("canvas");
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const ctx = canvas.getContext("2d");
-        await page.render({ canvasContext: ctx, viewport }).promise;
-        out.push({ dataUrl: canvas.toDataURL("image/png"), width: viewport.width, height: viewport.height });
-      }
-      if (!cancelled) {
-        setPages(out);
-        setLoadingPdf(false);
+      try {
+        const buf = await pdfFile.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+        const out = [];
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const unscaled = page.getViewport({ scale: 1 });
+          const scale = PLACEMENT_PAGE_WIDTH / unscaled.width;
+          const viewport = page.getViewport({ scale });
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext("2d");
+          await page.render({ canvasContext: ctx, viewport }).promise;
+          out.push({ dataUrl: canvas.toDataURL("image/png"), width: viewport.width, height: viewport.height });
+        }
+        if (!cancelled) setPages(out);
+      } catch (e) {
+        console.error("Failed to render PDF for placement:", e);
+        if (!cancelled) toast("Failed to render PDF", "error");
+      } finally {
+        if (!cancelled) setLoadingPdf(false);
       }
     })();
     return () => {
