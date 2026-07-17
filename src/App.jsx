@@ -10565,6 +10565,8 @@ function SignerFillScreen({ doc, user, mySignature, onClose, onSigned, toast, ge
   const mySigner = (doc.signers || []).find((s) => s.user_id === user?.id);
 
   useEffect(() => {
+    console.log("SignerFillScreen doc object:", doc);
+    console.log("source_file_url value:", doc.source_file_url, typeof doc.source_file_url);
     if (!doc.source_file_url) {
       setLoadingPdf(false);
       return;
