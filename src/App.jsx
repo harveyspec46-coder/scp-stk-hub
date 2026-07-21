@@ -10321,7 +10321,7 @@ async function exportSignedPdf(doc, toast) {
           ctx.drawImage(img, left, top, width, height);
         } else if (f.type === "date" && f.filled_value) {
           ctx.fillStyle = "#000000";
-          ctx.font = `${Math.round(height * 0.7)}px sans-serif`;
+          ctx.font = `${Math.round(height * 0.4)}px sans-serif`;
           ctx.textBaseline = "middle";
           ctx.fillText(f.filled_value, left, top + height / 2);
         }
@@ -11042,6 +11042,23 @@ function ESignatures({ toast, user }) {
     }
   };
 
+  const deleteDocument = async (doc) => {
+    if (!window.confirm(`Delete "${doc.name}"? This cannot be undone.`)) return;
+    try {
+      const token = await getToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/esign/documents/${doc.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Delete failed");
+      toast("Document deleted", "success");
+      loadDocuments();
+    } catch (e) {
+      console.error("Delete document failed:", e);
+      toast("Failed to delete document", "error");
+    }
+  };
+
   useEffect(() => {
     loadDocuments();
   }, []);
@@ -11540,6 +11557,18 @@ function ESignatures({ toast, user }) {
                   }}
                 >
                   📄 PDF
+                </button>
+              )}
+              {doc.created_by === user?.id && (
+                <button
+                  className="btn btn-sm"
+                  style={{ marginLeft: 6, color: T.pink }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteDocument(doc);
+                  }}
+                >
+                  🗑️ Delete
                 </button>
               )}
             </div>
