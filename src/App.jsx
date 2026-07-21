@@ -10055,6 +10055,7 @@ import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import pdfjsWorker from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 import { Rnd } from "react-rnd";
+import jsPDF from "jspdf";
 
 function PdfPageImages({ file, onPagesRendered }) {
   const [images, setImages] = useState([]);
@@ -10270,6 +10271,85 @@ function MySignatureSetup({ user, existing, onClose, onSaved, toast, getToken })
 // ── Field placement screen (admin marks where each signer's Signature/Date
 // goes, drag + resize via react-rnd) ───────────────────────────────────────
 const PLACEMENT_PAGE_WIDTH = 600;
+
+// ── Export a signed PDF client-side: render every page, draw each filled
+// field (signature image or date text) at its stored position, output via
+// jsPDF. This avoids needing any server-side PDF library — everything here
+// reuses the same pdf.js rendering already proven in the placement/signing
+// screens. ────────────────────────────────────────────────────────────────
+async function exportSignedPdf(doc, toast) {
+  try {
+    const pdf = await pdfjsLib.getDocument({ url: doc.source_file_url }).promise;
+
+    const token = await (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      return session?.access_token;
+    })();
+    const fieldsRes = await fetch(
+      `${import.meta.env.VITE_API_URL}/api/esign/documents/${doc.id}/fields`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    const fieldsJson = await fieldsRes.json();
+    const allFields = fieldsJson.data || [];
+
+    let outPdf = null;
+
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const viewport = page.getViewport({ scale: 2 }); // render at 2x for crisper output
+      const canvas = document.createElement("canvas");
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      const ctx = canvas.getContext("2d");
+      await page.render({ canvasContext: ctx, viewport }).promise;
+
+      // Draw each filled field belonging to this page on top of the canvas
+      const fieldsOnPage = allFields.filter((f) => f.page === i && f.filled);
+      for (const f of fieldsOnPage) {
+        const left = (f.x / 100) * canvas.width;
+        const top = (f.y / 100) * canvas.height;
+        const width = (f.width / 100) * canvas.width;
+        const height = (f.height / 100) * canvas.height;
+
+        if (f.type === "signature" && f.filled_value) {
+          const img = new Image();
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+            img.src = f.filled_value;
+          });
+          ctx.drawImage(img, left, top, width, height);
+        } else if (f.type === "date" && f.filled_value) {
+          ctx.fillStyle = "#000000";
+          ctx.font = `${Math.round(height * 0.7)}px sans-serif`;
+          ctx.textBaseline = "middle";
+          ctx.fillText(f.filled_value, left, top + height / 2);
+        }
+      }
+
+      const imgData = canvas.toDataURL("image/jpeg", 0.92);
+      const pageWidthPt = viewport.width / 2; // undo the 2x render scale for PDF point size
+      const pageHeightPt = viewport.height / 2;
+
+      if (!outPdf) {
+        outPdf = new jsPDF({
+          orientation: pageWidthPt > pageHeightPt ? "landscape" : "portrait",
+          unit: "pt",
+          format: [pageWidthPt, pageHeightPt],
+        });
+      } else {
+        outPdf.addPage([pageWidthPt, pageHeightPt]);
+      }
+      outPdf.addImage(imgData, "JPEG", 0, 0, pageWidthPt, pageHeightPt);
+    }
+
+    outPdf.save(`${doc.name || "signed-document"}.pdf`);
+  } catch (e) {
+    console.error("Export signed PDF failed:", e);
+    toast("Failed to export signed PDF", "error");
+  }
+}
+
 
 function FieldPlacementScreen({ doc, pdfFile, onClose, onSaved, toast, getToken }) {
   const [pages, setPages] = useState([]); // [{ dataUrl, width, height }]
@@ -11455,7 +11535,8 @@ function ESignatures({ toast, user }) {
                   style={{ marginLeft: 6 }}
                   onClick={(e) => {
                     e.stopPropagation();
-                    toast("Download — PDF export via backend in Phase 1");
+                    toast("Preparing signed PDF…");
+                    exportSignedPdf(doc, toast);
                   }}
                 >
                   📄 PDF
