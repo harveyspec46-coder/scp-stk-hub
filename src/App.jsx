@@ -11176,6 +11176,7 @@ function Committees({ toast, user }) {
         <CommitteeManageModal
           committee={managedCommittee}
           boardUsers={boardUsers}
+          user={user}
           toast={toast}
           getToken={getToken}
           onClose={() => setManageId(null)}
@@ -11268,7 +11269,7 @@ function Committees({ toast, user }) {
 
 // -- Committee manage modal (member add/remove/role-assign, admin only for
 // changes; any board member can view) -------------------------------------
-function CommitteeManageModal({ committee, boardUsers, toast, getToken, onClose, onChanged }) {
+function CommitteeManageModal({ committee, boardUsers, user, toast, getToken, onClose, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [addingId, setAddingId] = useState("");
 
@@ -11343,6 +11344,83 @@ function CommitteeManageModal({ committee, boardUsers, toast, getToken, onClose,
     }
   };
 
+  const [docs, setDocs] = useState([]);
+  const [docsLoading, setDocsLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+
+  const loadDocs = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/committees/${committee.id}/documents`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const json = await res.json();
+      setDocs(json.data || []);
+    } catch (e) {
+      console.error("Failed to load committee documents:", e);
+    } finally {
+      setDocsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadDocs();
+  }, [committee.id]);
+
+  const uploadDoc = async (file) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const path = `${session.user.id}/${Date.now()}_${file.name}`;
+      const { error: uploadError } = await supabase.storage
+        .from("committee-documents")
+        .upload(path, file);
+      if (uploadError) throw uploadError;
+      const { data: urlData } = supabase.storage.from("committee-documents").getPublicUrl(path);
+
+      const token = await getToken();
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/committees/${committee.id}/documents`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            name: file.name,
+            url: urlData.publicUrl,
+            file_type: file.name.split(".").pop() || "",
+          }),
+        }
+      );
+      if (!res.ok) throw new Error("Add document failed");
+      toast("Document added ✓", "success");
+      loadDocs();
+    } catch (e) {
+      console.error("Upload committee document failed:", e);
+      toast("Failed to upload document", "error");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const deleteDoc = async (doc) => {
+    if (!window.confirm(`Delete "${doc.name}"?`)) return;
+    try {
+      const token = await getToken();
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/committees/${committee.id}/documents/${doc.id}`,
+        { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) throw new Error("Delete failed");
+      toast("Document deleted", "success");
+      loadDocs();
+    } catch (e) {
+      console.error("Delete committee document failed:", e);
+      toast("Failed to delete document (only the uploader or an admin can)", "error");
+    }
+  };
+
   return (
     <Modal
       title={committee.name}
@@ -11414,6 +11492,61 @@ function CommitteeManageModal({ committee, boardUsers, toast, getToken, onClose,
             Add
           </button>
         </div>
+      </div>
+
+      <div className="ff" style={{ marginTop: 18, borderTop: "1px solid var(--border)", paddingTop: 16 }}>
+        <label className="fl">Documents & materials</label>
+        <input
+          type="file"
+          className="fi2"
+          disabled={uploading}
+          onChange={(e) => {
+            uploadDoc(e.target.files?.[0] || null);
+            e.target.value = "";
+          }}
+        />
+        {docsLoading && (
+          <div className="fhint">Loading documents…</div>
+        )}
+        {!docsLoading && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 10 }}>
+            {docs.map((d) => (
+              <div
+                key={d.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 10px",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                }}
+              >
+                <span style={{ fontSize: 16 }}>📄</span>
+                <a
+                  href={d.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ flex: 1, fontSize: 12, color: T.text, textDecoration: "none" }}
+                >
+                  {d.name}
+                </a>
+                {(d.uploaded_by === user?.id || user?.role === "admin") && (
+                  <button
+                    className="btn btn-sm"
+                    style={{ color: T.pink }}
+                    onClick={() => deleteDoc(d)}
+                  >
+                    Delete
+                  </button>
+                )}
+              </div>
+            ))}
+            {docs.length === 0 && (
+              <div className="fhint">No documents yet.</div>
+            )}
+          </div>
+        )}
       </div>
     </Modal>
   );
