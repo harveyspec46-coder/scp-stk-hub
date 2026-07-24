@@ -11127,6 +11127,7 @@ function Committees({ toast, user }) {
   const openCommittee = (id) => {
     setSel(id);
     loadWsDocs(id);
+    loadMessages(id);
   };
 
   const uploadWsDoc = async (file) => {
@@ -11179,6 +11180,68 @@ function Committees({ toast, user }) {
     } catch (e) {
       console.error("Delete committee document failed:", e);
       toast("Failed to delete document (only the uploader or an admin can)", "error");
+    }
+  };
+
+  const [messages, setMessages] = useState([]);
+  const [messagesLoading, setMessagesLoading] = useState(false);
+  const [messageInput, setMessageInput] = useState("");
+  const [sendingMessage, setSendingMessage] = useState(false);
+
+  const loadMessages = async (committeeId) => {
+    setMessagesLoading(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/committees/${committeeId}/messages`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const json = await res.json();
+      setMessages(json.data || []);
+    } catch (e) {
+      console.error("Failed to load committee messages:", e);
+    } finally {
+      setMessagesLoading(false);
+    }
+  };
+
+  // Real-time: refresh messages the moment anyone posts to this committee
+  useEffect(() => {
+    if (!sel) return;
+    const channel = supabase
+      .channel("committee-messages-" + sel)
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "committee_messages", filter: `committee_id=eq.${sel}` },
+        () => loadMessages(sel)
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [sel]);
+
+  const sendMessage = async () => {
+    if (!messageInput.trim() || !selCommittee) return;
+    setSendingMessage(true);
+    try {
+      const token = await getToken();
+      const res = await fetch(
+        `${import.meta.env.VITE_API_URL}/api/committees/${selCommittee.id}/messages`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ body: messageInput.trim() }),
+        }
+      );
+      if (!res.ok) throw new Error("Send failed");
+      setMessageInput("");
+      loadMessages(selCommittee.id);
+    } catch (e) {
+      console.error("Send committee message failed:", e);
+      toast("Failed to send message", "error");
+    } finally {
+      setSendingMessage(false);
     }
   };
 
@@ -11444,29 +11507,82 @@ function Committees({ toast, user }) {
                 <div style={{ fontSize: 13, fontWeight: 700, color: T.white }}>Messages</div>
                 <div style={{ fontSize: 11, color: T.muted }}>Only visible to committee members</div>
               </div>
-              <div
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  color: T.muted,
-                  fontSize: 12,
-                  textAlign: "center",
-                  padding: 20,
-                }}
-              >
-                Committee messaging is coming soon — this panel will show a live
-                <br />
-                group chat for {selCommittee.name} members.
+              <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
+                {messagesLoading && (
+                  <div style={{ textAlign: "center", color: T.muted, fontSize: 12 }}>Loading messages…</div>
+                )}
+                {!messagesLoading && messages.length === 0 && (
+                  <div style={{ textAlign: "center", color: T.muted, fontSize: 12, marginTop: 20 }}>
+                    No messages yet — say hello to {selCommittee.name}.
+                  </div>
+                )}
+                {!messagesLoading &&
+                  messages.map((m) => {
+                    const isMe = m.user_id === user?.id;
+                    return (
+                      <div
+                        key={m.id}
+                        style={{
+                          alignSelf: isMe ? "flex-end" : "flex-start",
+                          maxWidth: "75%",
+                        }}
+                      >
+                        {!isMe && (
+                          <div style={{ fontSize: 10, color: T.muted, marginBottom: 2, marginLeft: 4 }}>
+                            {m.full_name || "Member"}
+                          </div>
+                        )}
+                        <div
+                          style={{
+                            background: isMe ? "var(--p)" : "var(--dk)",
+                            color: isMe ? "#fff" : T.text,
+                            border: isMe ? "none" : "1px solid var(--border)",
+                            borderRadius: 12,
+                            padding: "8px 12px",
+                            fontSize: 13,
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {m.body}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 9,
+                            color: T.muted,
+                            marginTop: 2,
+                            textAlign: isMe ? "right" : "left",
+                            marginRight: isMe ? 4 : 0,
+                            marginLeft: isMe ? 0 : 4,
+                          }}
+                        >
+                          {new Date(m.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </div>
+                      </div>
+                    );
+                  })}
               </div>
-              <div style={{ padding: 12, borderTop: "1px solid var(--border)" }}>
+              <div style={{ padding: 12, borderTop: "1px solid var(--border)", display: "flex", gap: 8 }}>
                 <input
                   className="fi2"
-                  placeholder="Message coming soon…"
-                  disabled
-                  style={{ width: "100%" }}
+                  placeholder="Message this committee…"
+                  value={messageInput}
+                  disabled={sendingMessage}
+                  onChange={(e) => setMessageInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage();
+                    }
+                  }}
+                  style={{ flex: 1 }}
                 />
+                <button
+                  className="btn btn-p"
+                  disabled={!messageInput.trim() || sendingMessage}
+                  onClick={sendMessage}
+                >
+                  Send
+                </button>
               </div>
             </div>
           </div>
